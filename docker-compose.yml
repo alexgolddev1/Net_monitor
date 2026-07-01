@@ -40,12 +40,14 @@ services:
 
   ntopng:
     image: ntop/ntopng:latest
-    command: [ "--community", "--http-port=3000", "-i", "none" ]
-    ports:
-      - "3000:3000"
+    restart: unless-stopped
+    network_mode: host
+    command: [ "--community", "--http-port=3000", "-i", "eth0" ]
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
     volumes:
       - ntopng_data:/var/lib/ntopng
-
 volumes:
   db_data:
   ntopng_data:
