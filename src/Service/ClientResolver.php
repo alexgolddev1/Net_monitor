@@ -15,7 +15,7 @@ class ClientResolver
     public function resolve(?string $mac, ?string $ip): Device
     {
         $repo = $this->em->getRepository(Device::class);
-        $device = $mac ? $repo->findOneBy(['mac' => strtoupper($mac)]) : null;
+        $device = $mac ? $repo->findOneByMac($mac) : null;
         $device ??= $ip ? $repo->findOneBy(['currentIp' => $ip]) : null;
 
         if (!$device) {

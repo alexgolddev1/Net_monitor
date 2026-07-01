@@ -2,6 +2,7 @@
 
 namespace App\Service;
 
+use App\Entity\Device;
 use Doctrine\ORM\EntityManagerInterface;
 use Psr\Log\LoggerInterface;
 
@@ -19,6 +20,7 @@ class MikroTikClient
     {
         $leases = $this->mockNetworkData ? $this->mockLeases() : $this->fetchLeases();
         $count = 0;
+        $processedMacs = [];
 
         foreach ($leases as $lease) {
             $mac = strtoupper((string) ($lease['mac'] ?? ''));
@@ -27,12 +29,24 @@ class MikroTikClient
                 continue;
             }
 
-            $device = $this->resolver->resolve($mac, $ip);
-            $device
-                ->setHostname($lease['hostname'] ?? $device->getHostname())
-                ->setVendor($lease['vendor'] ?? $device->getVendor())
-                ->setVlan($lease['vlan'] ?? $device->getVlan())
-                ->setDeviceName($lease['comment'] ?? $device->getDeviceName());
+            $status = strtolower((string) ($lease['status'] ?? ''));
+            $device = $processedMacs[$mac] ?? null;
+
+            if ($device) {
+                $this->logger->warning('Duplicate MikroTik lease MAC encountered', [
+                    'mac' => $mac,
+                    'ip' => $ip,
+                    'status' => $status,
+                ]);
+                if ($status === 'bound') {
+                    $this->applyLeaseData($device, $lease);
+                }
+            } else {
+                $device = $this->resolver->resolve($mac, $ip);
+                $processedMacs[$mac] = $device;
+                $this->applyLeaseData($device, $lease);
+            }
+
             $this->resolver->recordIp($device, $ip);
             ++$count;
         }
@@ -95,6 +109,34 @@ class MikroTikClient
         }
 
         return [];
+    }
+
+    private function applyLeaseData(Device $device, array $lease): void
+    {
+        $hostname = $lease['hostname'] ?? null;
+        if ($hostname !== null) {
+            $device->setHostname($hostname);
+        }
+
+        $vendor = $lease['vendor'] ?? null;
+        if ($vendor !== null) {
+            $device->setVendor($vendor);
+        }
+
+        $vlan = $lease['vlan'] ?? null;
+        if ($vlan !== null) {
+            $device->setVlan($vlan);
+        }
+
+        $comment = $lease['comment'] ?? null;
+        if ($comment !== null) {
+            $device->setDeviceName($comment);
+        }
+
+        $ip = $lease['ip'] ?? null;
+        if ($ip !== null) {
+            $device->setCurrentIp($ip);
+        }
     }
 
     private function normalizeLeaseRow(array $row): ?array
