@@ -39,7 +39,7 @@ services:
       retries: 20
 
   ntopng:
-    image: ntop/ntopng:stable
+    image: ntop/ntopng:latest
     command: ["--community", "-i", "tcp://*:5556", "-F", "mysql;database;ntopng;flows;root;root"]
     ports:
       - "3000:3000"
