@@ -1,0 +1,58 @@
+{% extends 'base.html.twig' %}
+{% block title %}Dashboard{% endblock %}
+{% block heading %}Dashboard{% endblock %}
+{% block body %}
+<div class="grid stats">
+    <div class="stat"><div class="muted">Clients</div><div class="value">{{ clientCount }}</div></div>
+    <div class="stat"><div class="muted">Devices</div><div class="value">{{ deviceCount }}</div></div>
+    <div class="stat"><div class="muted">Unlinked</div><div class="value">{{ unlinkedCount }}</div></div>
+    <div class="stat"><div class="muted">Traffic today</div><div class="value">{{ (todayTraffic / 1048576)|number_format(1) }} MB</div></div>
+</div>
+<div class="grid two">
+    <section class="panel">
+        <h2>Top devices today</h2>
+        <table><tr><th>MAC</th><th>IP</th><th>Traffic</th></tr>
+            {% for row in topDevices %}
+                <tr><td><a href="{{ path('device_show',{id:row.device.id}) }}">{{ row.device.mac }}</a></td><td>{{ row.device.currentIp }}</td><td>{{ (row.today / 1048576)|number_format(1) }} MB</td></tr>
+            {% endfor %}
+        </table>
+    </section>
+    <section class="panel">
+        <h2>Top clients today</h2>
+        <table><tr><th>Client</th><th>Room</th><th>Traffic</th></tr>
+            {% for row in topClients %}
+                <tr><td><a href="{{ path('client_show',{id:row.client.id}) }}">{{ row.client.displayName }}</a></td><td>{{ row.client.roomNumber }}</td><td>{{ (row.today / 1048576)|number_format(1) }} MB</td></tr>
+            {% endfor %}
+        </table>
+    </section>
+    <section class="panel">
+        <h2>Top apps</h2>
+        <canvas id="appsChart" height="150"></canvas>
+    </section>
+    <section class="panel">
+        <h2>Top domains</h2>
+        <table>
+            {% for domain, bytes in topDomains %}
+                <tr><td><img class="favicon" src="https://www.google.com/s2/favicons?domain={{ domain }}&sz=64" alt="">{{ domain }}</td><td>{{ (bytes / 1048576)|number_format(1) }} MB</td></tr>
+            {% endfor %}
+        </table>
+    </section>
+    <section class="panel">
+        <h2>Latest devices</h2>
+        <table><tr><th>MAC</th><th>Hostname</th><th>First seen</th></tr>
+            {% for device in latestDevices %}
+                <tr><td>{{ device.mac }}</td><td>{{ device.hostname }}</td><td>{{ device.firstSeenAt ? device.firstSeenAt|date('Y-m-d H:i') : '-' }}</td></tr>
+            {% endfor %}
+        </table>
+    </section>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+new Chart(document.getElementById('appsChart'), {
+  type: 'bar',
+  data: { labels: {{ topApps|keys|json_encode|raw }}, datasets: [{ label: 'MB', data: {{ topApps|map(v => (v / 1048576)|round(1))|json_encode|raw }}, backgroundColor: '#0f766e' }] },
+  options: { responsive: true, plugins: { legend: { display: false } } }
+});
+</script>
+{% endblock %}

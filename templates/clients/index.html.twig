@@ -1,0 +1,19 @@
+{% extends 'base.html.twig' %}
+{% block title %}Clients{% endblock %}
+{% block heading %}Clients{% endblock %}
+{% block body %}
+<table>
+    <tr><th>ФИО</th><th>Кабинет</th><th>Телефон</th><th>Devices</th><th>Today</th><th>Month</th><th>Last activity</th></tr>
+    {% for row in clients %}
+        <tr>
+            <td><a href="{{ path('client_show',{id:row.client.id}) }}">{{ row.client.displayName }}</a></td>
+            <td>{{ row.client.roomNumber }}</td>
+            <td>{{ row.client.phone }}</td>
+            <td>{{ row.deviceCount }}</td>
+            <td>{{ (row.today / 1048576)|number_format(1) }} MB</td>
+            <td>{{ (row.month / 1048576)|number_format(1) }} MB</td>
+            <td>{{ row.lastSeen ? row.lastSeen|date('Y-m-d H:i') : '-' }}</td>
+        </tr>
+    {% endfor %}
+</table>
+{% endblock %}

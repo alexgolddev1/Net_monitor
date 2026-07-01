@@ -1,0 +1,18 @@
+parameters:
+  app.mock_network_data: '%env(bool:MOCK_NETWORK_DATA)%'
+  app.favicon_provider: '%env(FAVICON_PROVIDER)%'
+
+services:
+  _defaults:
+    autowire: true
+    autoconfigure: true
+    bind:
+      bool $mockNetworkData: '%app.mock_network_data%'
+      string $faviconProvider: '%app.favicon_provider%'
+
+  App\:
+    resource: '../src/'
+    exclude:
+      - '../src/DependencyInjection/'
+      - '../src/Entity/'
+      - '../src/Kernel.php'

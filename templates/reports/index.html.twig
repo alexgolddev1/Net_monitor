@@ -1,0 +1,21 @@
+{% extends 'base.html.twig' %}
+{% block title %}Reports{% endblock %}
+{% block heading %}Reports{% endblock %}
+{% block body %}
+<div class="grid two">
+    <section class="panel">
+        <h2>Daily report</h2>
+        <table><tr><th>Client</th><th>Room</th><th>Traffic</th></tr>{% for row in daily %}<tr><td>{{ row.fullName ?: 'Unlinked' }}</td><td>{{ row.roomNumber }}</td><td>{{ (row.totalBytes / 1048576)|number_format(1) }} MB</td></tr>{% endfor %}</table>
+    </section>
+    <section class="panel">
+        <h2>Monthly report</h2>
+        <table><tr><th>Client</th><th>Room</th><th>Traffic</th></tr>{% for row in monthly %}<tr><td>{{ row.fullName ?: 'Unlinked' }}</td><td>{{ row.roomNumber }}</td><td>{{ (row.totalBytes / 1048576)|number_format(1) }} MB</td></tr>{% endfor %}</table>
+    </section>
+</div>
+<p>
+    <a class="btn" href="{{ path('reports_daily_csv') }}">Daily CSV</a>
+    <a class="btn" href="{{ path('reports_monthly_csv') }}">Monthly CSV</a>
+    <a class="btn secondary" href="/api/reports/daily">Daily JSON</a>
+    <a class="btn secondary" href="/api/reports/monthly">Monthly JSON</a>
+</p>
+{% endblock %}

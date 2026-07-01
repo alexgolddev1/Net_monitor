@@ -1,0 +1,20 @@
+security:
+  password_hashers:
+    Symfony\Component\Security\Core\User\PasswordAuthenticatedUserInterface: 'auto'
+  providers:
+    admin_env:
+      id: App\Security\EnvUserProvider
+  firewalls:
+    dev:
+      pattern: ^/(_(profiler|wdt)|css|images|js)/
+      security: false
+    main:
+      lazy: true
+      provider: admin_env
+      custom_authenticator: App\Security\LoginFormAuthenticator
+      logout:
+        path: app_logout
+        target: app_login
+  access_control:
+    - { path: ^/login$, roles: PUBLIC_ACCESS }
+    - { path: ^/, roles: ROLE_ADMIN }

@@ -1,0 +1,25 @@
+<?php
+
+namespace App\Command;
+
+use App\Service\SiteCatalogService;
+use Symfony\Component\Console\Attribute\AsCommand;
+use Symfony\Component\Console\Command\Command;
+use Symfony\Component\Console\Input\InputInterface;
+use Symfony\Component\Console\Output\OutputInterface;
+
+#[AsCommand(name: 'app:enrich-site-catalog')]
+class EnrichSiteCatalogCommand extends Command
+{
+    public function __construct(private readonly SiteCatalogService $siteCatalogService)
+    {
+        parent::__construct();
+    }
+
+    protected function execute(InputInterface $input, OutputInterface $output): int
+    {
+        $count = $this->siteCatalogService->enrichFromSnapshots();
+        $output->writeln(sprintf('Added %d site catalog domains.', $count));
+        return Command::SUCCESS;
+    }
+}

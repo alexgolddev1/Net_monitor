@@ -1,0 +1,37 @@
+{% extends 'base.html.twig' %}
+{% block title %}Devices{% endblock %}
+{% block heading %}Devices{% endblock %}
+{% block body %}
+<table>
+    <tr><th>MAC</th><th>Current IP</th><th>Hostname</th><th>Vendor</th><th>VLAN</th><th>Client</th><th>Today</th><th>Last activity</th><th>Link</th></tr>
+    {% for row in devices %}
+        <tr>
+            <td><a href="{{ path('device_show',{id:row.device.id}) }}">{{ row.device.mac }}</a></td>
+            <td>{{ row.device.currentIp }}</td>
+            <td>{{ row.device.hostname }}</td>
+            <td>{{ row.device.vendor }}</td>
+            <td>{{ row.device.vlan }}</td>
+            <td>{% if row.device.client %}<a href="{{ path('client_show',{id:row.device.client.id}) }}">{{ row.device.client.displayName }}</a>{% else %}<span class="muted">unlinked</span>{% endif %}</td>
+            <td>{{ (row.today / 1048576)|number_format(1) }} MB</td>
+            <td>{{ row.device.lastSeenAt ? row.device.lastSeenAt|date('Y-m-d H:i') : '-' }}</td>
+            <td><button type="button" onclick="document.getElementById('link-{{ row.device.id }}').showModal()">Привязать</button></td>
+        </tr>
+    {% endfor %}
+</table>
+{% for row in devices %}
+<dialog id="link-{{ row.device.id }}" class="panel">
+    <h2>Привязать {{ row.device.mac }}</h2>
+    <form method="post" action="{{ path('device_link_client',{id:row.device.id}) }}">
+        <label>Existing client</label>
+        <select name="client_id"><option value="">Create new</option>{% for client in clients %}<option value="{{ client.id }}">{{ client.displayName }}{% if client.roomNumber %}, {{ client.roomNumber }}{% endif %}</option>{% endfor %}</select>
+        <div class="form-grid">
+            <div><label>ФИО</label><input name="full_name"></div>
+            <div><label>Кабинет</label><input name="room_number"></div>
+            <div><label>Телефон</label><input name="phone"></div>
+        </div>
+        <label>Комментарий</label><textarea name="comment"></textarea>
+        <div style="margin-top:12px; display:flex; gap:8px;"><button>Save</button><button type="button" class="secondary" onclick="this.closest('dialog').close()">Cancel</button></div>
+    </form>
+</dialog>
+{% endfor %}
+{% endblock %}

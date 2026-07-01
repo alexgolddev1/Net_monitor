@@ -1,0 +1,24 @@
+{% extends 'base.html.twig' %}
+{% block title %}{{ client.displayName }}{% endblock %}
+{% block heading %}{{ client.displayName }}{% endblock %}
+{% block body %}
+<div class="grid stats">
+    <div class="stat"><div class="muted">Room</div><div class="value">{{ client.roomNumber ?: '-' }}</div></div>
+    <div class="stat"><div class="muted">Phone</div><div class="value">{{ client.phone ?: '-' }}</div></div>
+    <div class="stat"><div class="muted">Devices</div><div class="value">{{ devices|length }}</div></div>
+</div>
+<div class="grid two">
+    <section class="panel"><h2>30-day activity</h2><canvas id="clientUsage" height="160"></canvas></section>
+    <section class="panel"><h2>Devices</h2><table><tr><th>MAC</th><th>IP</th><th>Hostname</th><th>VLAN</th></tr>{% for device in devices %}<tr><td><a href="{{ path('device_show',{id:device.id}) }}">{{ device.mac }}</a></td><td>{{ device.currentIp }}</td><td>{{ device.hostname }}</td><td>{{ device.vlan }}</td></tr>{% endfor %}</table></section>
+    <section class="panel"><h2>Latest flows/snapshots</h2><table><tr><th>Time</th><th>IP</th><th>Total</th><th>Domains</th></tr>{% for s in snapshots %}<tr><td>{{ s.snapshotAt|date('Y-m-d H:i') }}</td><td>{{ s.ip }}</td><td>{{ (s.totalBytes / 1048576)|number_format(1) }} MB</td><td>{% for d in s.destinationsJson|slice(0,4) %}{{ d.domain }} {% endfor %}</td></tr>{% endfor %}</table></section>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+new Chart(document.getElementById('clientUsage'), {
+  type: 'bar',
+  data: { labels: {{ daily|keys|json_encode|raw }}, datasets: [{ label: 'MB', data: {{ daily|map(v => (v / 1048576)|round(1))|json_encode|raw }}, backgroundColor: '#0f766e' }] },
+  options: { plugins: { legend: { display: false } } }
+});
+</script>
+{% endblock %}
