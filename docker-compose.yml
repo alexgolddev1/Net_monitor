@@ -40,12 +40,12 @@ services:
 
   ntopng:
     image: ntop/ntopng:latest
-    command: ["--community", "-i", "tcp://*:5556", "-F", "mysql;database;ntopng;flows;root;root"]
+    command: [ "--community", "--http-port=3000", "-i", "none" ]
     ports:
       - "3000:3000"
-      - "2055:2055/udp"
-    depends_on:
-      - database
+    volumes:
+      - ntopng_data:/var/lib/ntopng
 
 volumes:
   db_data:
+  ntopng_data:
