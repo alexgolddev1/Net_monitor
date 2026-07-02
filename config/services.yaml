@@ -2,6 +2,7 @@ parameters:
   app.mock_network_data: '%env(bool:MOCK_NETWORK_DATA)%'
   app.favicon_provider: '%env(FAVICON_PROVIDER)%'
   app.local_subnets: '%env(LOCAL_SUBNETS)%'
+  app.own_wan_ips: '%env(OWN_WAN_IPS)%'
 
 services:
   _defaults:
@@ -11,6 +12,7 @@ services:
       bool $mockNetworkData: '%app.mock_network_data%'
       string $faviconProvider: '%app.favicon_provider%'
       string $localSubnets: '%app.local_subnets%'
+      string $ownWanIps: '%app.own_wan_ips%'
 
   App\:
     resource: '../src/'

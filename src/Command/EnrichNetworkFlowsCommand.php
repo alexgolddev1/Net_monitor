@@ -3,7 +3,10 @@
 namespace App\Command;
 
 use App\Service\NetworkFlowEnricher;
+use App\Service\AppClassifier;
+use Doctrine\DBAL\ArrayParameterType;
 use Doctrine\DBAL\Connection;
+use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
@@ -16,67 +19,212 @@ class EnrichNetworkFlowsCommand extends Command
     public function __construct(
         private readonly Connection $connection,
         private readonly NetworkFlowEnricher $networkFlowEnricher,
+        private readonly AppClassifier $appClassifier,
+        private readonly EntityManagerInterface $em,
     ) {
         parent::__construct();
     }
 
     protected function configure(): void
     {
-        $this->addOption('limit', null, InputOption::VALUE_REQUIRED, 'Maximum number of flows to enrich.', 10000);
+        $this
+            ->addOption('limit', null, InputOption::VALUE_REQUIRED, 'Maximum number of flows to enrich.', 10000)
+            ->addOption('batch-size', null, InputOption::VALUE_REQUIRED, 'Rows to process per batch.', 500);
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $limit = max(1, (int) $input->getOption('limit'));
+        $batchSize = max(1, min($limit, (int) $input->getOption('batch-size')));
 
-        $rows = $this->connection->fetchAllAssociative(
-            'SELECT id, direction, src_ip, dst_ip, protocol, src_port, dst_port, domain, app_name, domain_source
-             FROM network_flow
-             WHERE domain IS NULL OR app_name IS NULL
-             ORDER BY id DESC
-             LIMIT '.$limit
-        );
-
+        $processed = 0;
         $enriched = 0;
         $domainsFound = 0;
-        $this->connection->transactional(function () use ($rows, &$enriched, &$domainsFound): void {
-            foreach ($rows as $row) {
-                $domainWasMissing = empty($row['domain']);
-                $payload = $this->networkFlowEnricher->enrich(
-                    (string) ($row['direction'] ?? 'external'),
-                    isset($row['src_ip']) ? (string) $row['src_ip'] : null,
-                    isset($row['dst_ip']) ? (string) $row['dst_ip'] : null,
-                    isset($row['protocol']) ? (int) $row['protocol'] : null,
-                    isset($row['src_port']) ? (int) $row['src_port'] : null,
-                    isset($row['dst_port']) ? (int) $row['dst_port'] : null,
-                    isset($row['domain']) ? (string) $row['domain'] : null,
-                    isset($row['domain_source']) ? (string) $row['domain_source'] : null,
-                );
+        $dnsMatchesFound = 0;
+        $lastId = null;
 
-                if (!empty($payload['domain']) && $domainWasMissing) {
-                    $domainsFound++;
-                }
-
-                $update = [
-                    'app_name' => $payload['app_name'],
-                    'organization' => $payload['organization'],
-                ];
-
-                if ($payload['domain'] !== null) {
-                    $update['domain'] = $payload['domain'];
-                }
-
-                if ($payload['domain_source'] !== null || $domainWasMissing) {
-                    $update['domain_source'] = $payload['domain_source'];
-                }
-
-                $this->connection->update('network_flow', $update, ['id' => (int) $row['id']]);
-                ++$enriched;
+        while ($processed < $limit) {
+            $currentBatchSize = min($batchSize, $limit - $processed);
+            $rows = $this->fetchFlowBatch($currentBatchSize, $lastId);
+            if ($rows === []) {
+                break;
             }
-        });
 
-        $output->writeln(sprintf('Enriched %d flows, domains found %d.', $enriched, $domainsFound));
+            $lastId = (int) end($rows)['id'];
+            $dnsByIp = $this->fetchDnsMatchesByIp($rows);
+            $dnsMatchesFound += count($dnsByIp);
+
+            $this->connection->transactional(function () use ($rows, $dnsByIp, &$enriched, &$domainsFound): void {
+                foreach ($rows as $row) {
+                    $domainWasMissing = empty($row['domain']);
+                    $domain = $this->domainForFlow($row, $dnsByIp);
+
+                    if ($domain === null) {
+                        $domain = $this->normalizeDomain(isset($row['domain']) ? (string) $row['domain'] : null);
+                    }
+
+                    if ($domain !== null && $domainWasMissing) {
+                        $domainsFound++;
+                    }
+
+                    $appName = $this->appClassifier->classify(
+                        $domain,
+                        isset($row['protocol']) ? (int) $row['protocol'] : null,
+                        isset($row['src_port']) ? (int) $row['src_port'] : null,
+                        isset($row['dst_port']) ? (int) $row['dst_port'] : null,
+                    );
+
+                    $update = [
+                        'app_name' => $appName,
+                        'organization' => $this->appClassifier->organizationForDomain($domain),
+                    ];
+
+                    if ($domain !== null) {
+                        $update['domain'] = $domain;
+                    }
+
+                    if ($domain !== null && $domainWasMissing) {
+                        $update['domain_source'] = 'dns_cache';
+                    } elseif ($domainWasMissing) {
+                        $update['domain_source'] = null;
+                    }
+
+                    $this->connection->update('network_flow', $update, ['id' => (int) $row['id']]);
+                    ++$enriched;
+                }
+            });
+
+            $processed += count($rows);
+            $this->em->clear();
+
+            if ($output->isVerbose()) {
+                $output->writeln(sprintf(
+                    'Processed batch: rows=%d dns_matches=%d updated_total=%d domains_found_total=%d',
+                    count($rows),
+                    count($dnsByIp),
+                    $enriched,
+                    $domainsFound
+                ));
+            }
+        }
+
+        $output->writeln(sprintf(
+            'Enriched %d flows, DNS matches %d, domains found %d.',
+            $enriched,
+            $dnsMatchesFound,
+            $domainsFound
+        ));
 
         return Command::SUCCESS;
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function fetchFlowBatch(int $limit, ?int $lastId): array
+    {
+        $where = '(domain IS NULL OR domain = \'\' OR app_name IS NULL OR app_name = \'\')';
+        $params = [];
+
+        if ($lastId !== null) {
+            $where .= ' AND id < :lastId';
+            $params['lastId'] = $lastId;
+        }
+
+        return $this->connection->fetchAllAssociative(
+            'SELECT id, direction, src_ip, dst_ip, protocol, src_port, dst_port, domain, app_name, domain_source
+             FROM network_flow
+             WHERE '.$where.'
+             ORDER BY id DESC
+             LIMIT '.$limit,
+            $params
+        );
+    }
+
+    /**
+     * @param list<array<string, mixed>> $rows
+     *
+     * @return array<string, string>
+     */
+    private function fetchDnsMatchesByIp(array $rows): array
+    {
+        $candidateIps = [];
+
+        foreach ($rows as $row) {
+            foreach ($this->candidateIpsForRow($row) as $candidateIp) {
+                $candidateIps[$candidateIp] = $candidateIp;
+            }
+        }
+
+        if ($candidateIps === []) {
+            return [];
+        }
+
+        $dnsRows = $this->connection->fetchAllAssociative(
+            'SELECT resolved_ip, domain
+             FROM dns_cache_record
+             WHERE resolved_ip IN (:ips)
+             ORDER BY last_seen_at DESC, id DESC',
+            ['ips' => array_values($candidateIps)],
+            ['ips' => ArrayParameterType::STRING]
+        );
+
+        $dnsByIp = [];
+        foreach ($dnsRows as $dnsRow) {
+            $ip = isset($dnsRow['resolved_ip']) ? (string) $dnsRow['resolved_ip'] : '';
+            if ($ip === '' || isset($dnsByIp[$ip])) {
+                continue;
+            }
+
+            $domain = $this->normalizeDomain(isset($dnsRow['domain']) ? (string) $dnsRow['domain'] : null);
+            if ($domain === null) {
+                continue;
+            }
+
+            $dnsByIp[$ip] = $domain;
+        }
+
+        return $dnsByIp;
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     *
+     * @return list<string>
+     */
+    private function candidateIpsForRow(array $row): array
+    {
+        return $this->networkFlowEnricher->remoteIpCandidates(
+            (string) ($row['direction'] ?? 'external'),
+            isset($row['src_ip']) ? (string) $row['src_ip'] : null,
+            isset($row['dst_ip']) ? (string) $row['dst_ip'] : null,
+        );
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     * @param array<string, string> $dnsByIp
+     */
+    private function domainForFlow(array $row, array $dnsByIp): ?string
+    {
+        foreach ($this->candidateIpsForRow($row) as $candidateIp) {
+            if (isset($dnsByIp[$candidateIp])) {
+                return $dnsByIp[$candidateIp];
+            }
+        }
+
+        return null;
+    }
+
+    private function normalizeDomain(?string $domain): ?string
+    {
+        if ($domain === null) {
+            return null;
+        }
+
+        $domain = strtolower(trim($domain));
+        $domain = rtrim($domain, '.');
+
+        return $domain === '' || filter_var($domain, FILTER_VALIDATE_IP) ? null : $domain;
     }
 }
