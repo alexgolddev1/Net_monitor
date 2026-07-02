@@ -8,6 +8,16 @@ use Doctrine\ORM\EntityManagerInterface;
 
 class SiteCatalogService
 {
+    private const DOMAIN_TITLES = [
+        'google.com' => 'Google',
+        'youtube.com' => 'YouTube',
+        'office.com' => 'Microsoft 365',
+        'github.com' => 'GitHub',
+        'wikipedia.org' => 'Wikipedia',
+        'zoom.us' => 'Zoom',
+        'cloudflare.com' => 'Cloudflare',
+    ];
+
     public function __construct(
         private readonly EntityManagerInterface $em,
         private readonly string $faviconProvider,
@@ -57,7 +67,7 @@ class SiteCatalogService
 
         $site = (new SiteCatalog())
             ->setDomain($domain)
-            ->setTitle($domain)
+            ->setTitle(self::DOMAIN_TITLES[$domain] ?? $domain)
             ->setFaviconUrl($favicon);
         $this->em->persist($site);
 

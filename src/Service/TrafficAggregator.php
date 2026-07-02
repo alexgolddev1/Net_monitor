@@ -5,6 +5,7 @@ namespace App\Service;
 use App\Entity\Device;
 use App\Entity\DeviceDailyUsage;
 use App\Entity\TrafficSnapshot;
+use App\Service\ApplicationLabelResolver;
 use Doctrine\DBAL\Connection;
 use Doctrine\ORM\EntityManagerInterface;
 
@@ -13,6 +14,7 @@ class TrafficAggregator
     public function __construct(
         private readonly EntityManagerInterface $em,
         private readonly Connection $connection,
+        private readonly ApplicationLabelResolver $applicationLabelResolver,
     ) {
     }
 
@@ -128,7 +130,9 @@ class TrafficAggregator
         $snapshots = $this->em->getRepository(TrafficSnapshot::class)->createQueryBuilder('s')
             ->andWhere('s.device = :device')
             ->andWhere('s.snapshotAt BETWEEN :start AND :end')
-            ->setParameters(['device' => $device, 'start' => $start, 'end' => $end])
+            ->setParameter('device', $device)
+            ->setParameter('start', $start)
+            ->setParameter('end', $end)
             ->setMaxResults(200)
             ->getQuery()
             ->getResult();
@@ -137,7 +141,9 @@ class TrafficAggregator
         foreach ($snapshots as $snapshot) {
             $items = $field === 'appsJson' ? $snapshot->getAppsJson() : $snapshot->getDestinationsJson();
             foreach ($items ?? [] as $item) {
-                $key = $item['name'] ?? $item['domain'] ?? null;
+                $key = $field === 'appsJson'
+                    ? $this->applicationLabelResolver->labelForItem($item)
+                    : ($item['domain'] ?? $item['name'] ?? null);
                 if (!$key) {
                     continue;
                 }
@@ -152,23 +158,41 @@ class TrafficAggregator
     public function topAppsFromFlows(Device $device, \DateTimeImmutable $start, \DateTimeImmutable $end): array
     {
         $rows = $this->connection->fetchAllAssociative(
-            'SELECT protocol, dst_port dstPort, COALESCE(SUM(bytes), 0) bytes
+            'SELECT
+                CASE WHEN direction = :download THEN src_ip ELSE dst_ip END remoteIp,
+                CASE WHEN direction = :download THEN src_port ELSE dst_port END remotePort,
+                protocol,
+                COALESCE(SUM(bytes), 0) bytes
              FROM network_flow
              WHERE device_id = :deviceId AND received_at BETWEEN :start AND :end
-             GROUP BY protocol, dst_port
+             GROUP BY remoteIp, remotePort, protocol
              ORDER BY bytes DESC
              LIMIT 10',
             [
+                'download' => 'download',
                 'deviceId' => $device->getId(),
                 'start' => $start->format('Y-m-d H:i:s'),
                 'end' => $end->format('Y-m-d H:i:s'),
             ]
         );
 
-        return array_map(fn (array $row): array => [
-            'name' => sprintf('%s/%s', $row['protocol'] ?? '-', $row['dstPort'] ?? '-'),
-            'bytes' => (int) $row['bytes'],
-        ], $rows);
+        $totals = [];
+        foreach ($rows as $row) {
+            $label = $this->applicationLabelResolver->resolveFromFlow(
+                isset($row['protocol']) ? (int) $row['protocol'] : null,
+                isset($row['remotePort']) ? (int) $row['remotePort'] : null,
+                isset($row['remoteIp']) ? (string) $row['remoteIp'] : null
+            );
+            $totals[$label] = ($totals[$label] ?? 0) + (int) $row['bytes'];
+        }
+
+        arsort($totals);
+
+        return array_map(
+            fn (string $name, int $bytes): array => ['name' => $name, 'bytes' => $bytes],
+            array_keys(array_slice($totals, 0, 10, true)),
+            array_values(array_slice($totals, 0, 10, true))
+        );
     }
 
     public function topDestinationsFromFlows(Device $device, \DateTimeImmutable $start, \DateTimeImmutable $end): array

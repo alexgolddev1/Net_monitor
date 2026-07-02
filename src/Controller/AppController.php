@@ -7,6 +7,7 @@ use App\Entity\Device;
 use App\Entity\DeviceDailyUsage;
 use App\Entity\DeviceIpHistory;
 use App\Entity\NetworkFlow;
+use App\Service\ApplicationLabelResolver;
 use App\Service\TrafficAggregator;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
@@ -17,7 +18,10 @@ use Symfony\Component\Routing\Attribute\Route;
 
 class AppController extends AbstractController
 {
-    public function __construct(private readonly EntityManagerInterface $em)
+    public function __construct(
+        private readonly EntityManagerInterface $em,
+        private readonly ApplicationLabelResolver $applicationLabelResolver,
+    )
     {
     }
 
@@ -185,19 +189,30 @@ class AppController extends AbstractController
     private function topAppsFromFlows(): array
     {
         $rows = $this->em->getConnection()->fetchAllAssociative(
-            'SELECT protocol, dst_port dstPort, COALESCE(SUM(bytes), 0) totalBytes
+            'SELECT
+                CASE WHEN direction = :download THEN src_ip ELSE dst_ip END remoteIp,
+                CASE WHEN direction = :download THEN src_port ELSE dst_port END remotePort,
+                protocol,
+                COALESCE(SUM(bytes), 0) totalBytes
              FROM network_flow
              WHERE received_at BETWEEN :start AND :end
-             GROUP BY protocol, dst_port
+             GROUP BY remoteIp, remotePort, protocol
              ORDER BY totalBytes DESC
              LIMIT 10',
-            $this->todayRangeParameters()
+            ['download' => 'download'] + $this->todayRangeParameters()
         );
 
         $apps = [];
         foreach ($rows as $row) {
-            $apps[sprintf('%s/%s', $row['protocol'] ?? '-', $row['dstPort'] ?? '-')] = (int) $row['totalBytes'];
+            $label = $this->applicationLabelResolver->resolveFromFlow(
+                isset($row['protocol']) ? (int) $row['protocol'] : null,
+                isset($row['remotePort']) ? (int) $row['remotePort'] : null,
+                isset($row['remoteIp']) ? (string) $row['remoteIp'] : null
+            );
+            $apps[$label] = ($apps[$label] ?? 0) + (int) $row['totalBytes'];
         }
+
+        arsort($apps);
 
         return $apps;
     }
@@ -205,11 +220,13 @@ class AppController extends AbstractController
     private function topDestinationsFromFlows(): array
     {
         $rows = $this->em->getConnection()->fetchAllAssociative(
-            'SELECT CASE WHEN direction = :download THEN src_ip ELSE dst_ip END destination, COALESCE(SUM(bytes), 0) totalBytes
+            'SELECT
+                CASE WHEN direction = :download THEN src_ip ELSE dst_ip END remoteIp,
+                COALESCE(SUM(bytes), 0) totalBytes
              FROM network_flow
              WHERE received_at BETWEEN :start AND :end
-             GROUP BY destination
-             HAVING destination IS NOT NULL
+             GROUP BY remoteIp
+             HAVING remoteIp IS NOT NULL
              ORDER BY totalBytes DESC
              LIMIT 10',
             ['download' => 'download'] + $this->todayRangeParameters()
@@ -217,8 +234,11 @@ class AppController extends AbstractController
 
         $destinations = [];
         foreach ($rows as $row) {
-            $destinations[$row['destination']] = (int) $row['totalBytes'];
+            $label = $this->applicationLabelResolver->domainForIp(isset($row['remoteIp']) ? (string) $row['remoteIp'] : null) ?? 'Unknown';
+            $destinations[$label] = ($destinations[$label] ?? 0) + (int) $row['totalBytes'];
         }
+
+        arsort($destinations);
 
         return $destinations;
     }
@@ -311,7 +331,7 @@ class AppController extends AbstractController
         foreach ($usages as $usage) {
             $items = $field === 'topAppsJson' ? $usage->getTopAppsJson() : $usage->getTopDestinationsJson();
             foreach ($items ?? [] as $item) {
-                $name = $item['name'] ?? $item['domain'] ?? null;
+                $name = $this->normalizeTopLabel($item);
                 if (!$name) {
                     continue;
                 }
@@ -320,6 +340,13 @@ class AppController extends AbstractController
         }
         arsort($totals);
         return array_slice($totals, 0, 10, true);
+    }
+
+    private function normalizeTopLabel(array $item): ?string
+    {
+        $label = $this->applicationLabelResolver->labelForItem($item);
+
+        return $label === 'Unknown' ? null : $label;
     }
 
     private function todayRangeParameters(): array

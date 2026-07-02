@@ -28,8 +28,17 @@ class AppFixtures extends Fixture
         }
 
         $domains = ['google.com', 'youtube.com', 'office.com', 'github.com', 'wikipedia.org', 'zoom.us', 'cloudflare.com'];
+        $catalogTitles = [
+            'google.com' => 'Google',
+            'youtube.com' => 'YouTube',
+            'office.com' => 'Microsoft 365',
+            'github.com' => 'GitHub',
+            'wikipedia.org' => 'Wikipedia',
+            'zoom.us' => 'Zoom',
+            'cloudflare.com' => 'Cloudflare',
+        ];
         foreach ($domains as $domain) {
-            $manager->persist((new SiteCatalog())->setDomain($domain)->setTitle($domain)->setFaviconUrl('https://www.google.com/s2/favicons?domain='.$domain.'&sz=64'));
+            $manager->persist((new SiteCatalog())->setDomain($domain)->setTitle($catalogTitles[$domain] ?? $domain)->setFaviconUrl('https://www.google.com/s2/favicons?domain='.$domain.'&sz=64'));
         }
 
         $apps = ['HTTPS', 'DNS', 'YouTube', 'Microsoft 365', 'Zoom', 'GitHub'];

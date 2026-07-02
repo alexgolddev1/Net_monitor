@@ -40,7 +40,7 @@
         <table>
             <tbody id="top-domains-body">
             {% for domain, bytes in topDomains %}
-                <tr><td><img class="favicon" src="https://www.google.com/s2/favicons?domain={{ domain }}&sz=64" alt="">{{ domain }}</td><td>{{ (bytes / 1048576)|number_format(1) }} МБ</td></tr>
+                <tr><td>{% if domain != 'Unknown' %}<img class="favicon" src="https://www.google.com/s2/favicons?domain={{ domain|url_encode }}&sz=64" alt="">{% endif %}{{ domain }}</td><td>{{ (bytes / 1048576)|number_format(1) }} МБ</td></tr>
             {% endfor %}
             </tbody>
         </table>
@@ -60,17 +60,45 @@
 {% endblock %}
 {% block scripts %}
 <script>
+const initialTopApps = {{ topApps|json_encode|raw }};
 const appsChart = new Chart(document.getElementById('appsChart'), {
   type: 'bar',
-  data: { labels: {{ topApps|keys|json_encode|raw }}, datasets: [{ label: 'МБ', data: {{ topApps|map(v => (v / 1048576)|round(1))|json_encode|raw }}, backgroundColor: '#0f766e' }] },
-  options: { responsive: true, plugins: { legend: { display: false } } }
+  data: { labels: Object.keys(initialTopApps), datasets: [{ label: 'Трафік', data: Object.values(initialTopApps), backgroundColor: '#0f766e' }] },
+  options: {
+    responsive: true,
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        callbacks: {
+          title: (items) => items[0]?.label || 'Unknown',
+          label: (context) => formatBytes(context.parsed.y),
+        },
+      },
+    },
+    scales: {
+      y: {
+        ticks: {
+          callback: (value) => formatBytes(value),
+        },
+      },
+    },
+  }
 });
 
 const dashboardStreamUrl = {{ path('api_dashboard_stream')|json_encode|raw }};
-const mbFormatter = new Intl.NumberFormat(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 
-function formatMb(bytes) {
-  return `${mbFormatter.format((Number(bytes) || 0) / 1048576)} МБ`;
+function formatBytes(bytes) {
+  const value = Number(bytes) || 0;
+  if (value >= 1073741824) {
+    return `${(value / 1073741824).toFixed(1)} GB`;
+  }
+  if (value >= 1048576) {
+    return `${Math.round(value / 1048576)} MB`;
+  }
+  if (value >= 1024) {
+    return `${Math.round(value / 1024)} KB`;
+  }
+  return `${value} B`;
 }
 
 function clearAndRender(tbody, rows) {
@@ -98,7 +126,7 @@ function renderTopDevices(rows) {
     const line = document.createElement('tr');
     line.appendChild(linkCell(row.mac || '-', `/devices/${row.id}`));
     line.appendChild(textCell(row.currentIp || '-'));
-    line.appendChild(textCell(formatMb(row.today)));
+    line.appendChild(textCell(formatBytes(row.today)));
     return line;
   });
   clearAndRender(tbody, tr);
@@ -110,7 +138,7 @@ function renderTopClients(rows) {
     const line = document.createElement('tr');
     line.appendChild(linkCell(row.displayName || '-', `/clients/${row.id}`));
     line.appendChild(textCell(row.roomNumber || '-'));
-    line.appendChild(textCell(formatMb(row.today)));
+    line.appendChild(textCell(formatBytes(row.today)));
     return line;
   });
   clearAndRender(tbody, tr);
@@ -118,17 +146,20 @@ function renderTopClients(rows) {
 
 function renderTopDomains(rows) {
   const tbody = document.getElementById('top-domains-body');
-  const tr = rows.map((row) => {
+  const normalizedRows = Array.isArray(rows) ? rows : Object.entries(rows || {}).map(([domain, bytes]) => ({ domain, bytes }));
+  const tr = normalizedRows.map((row) => {
     const line = document.createElement('tr');
     const domainCell = document.createElement('td');
-    const icon = document.createElement('img');
-    icon.className = 'favicon';
-    icon.alt = '';
-    icon.src = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(row.domain)}&sz=64`;
-    domainCell.appendChild(icon);
+    if (row.domain && row.domain !== 'Unknown') {
+      const icon = document.createElement('img');
+      icon.className = 'favicon';
+      icon.alt = '';
+      icon.src = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(row.domain)}&sz=64`;
+      domainCell.appendChild(icon);
+    }
     domainCell.appendChild(document.createTextNode(row.domain || '-'));
     line.appendChild(domainCell);
-    line.appendChild(textCell(formatMb(row.bytes)));
+    line.appendChild(textCell(formatBytes(row.bytes)));
     return line;
   });
   clearAndRender(tbody, tr);
@@ -150,13 +181,13 @@ function updateMetrics(data) {
   document.getElementById('stat-clients').textContent = data.clients ?? 0;
   document.getElementById('stat-devices').textContent = data.devices ?? 0;
   document.getElementById('stat-unlinked').textContent = data.unlinkedDevices ?? 0;
-  document.getElementById('stat-traffic').textContent = formatMb(data.todayTraffic);
+  document.getElementById('stat-traffic').textContent = formatBytes(data.todayTraffic);
 }
 
 function updateAppsChart(topApps) {
-  const entries = Object.entries(topApps || {});
-  appsChart.data.labels = entries.map(([label]) => label);
-  appsChart.data.datasets[0].data = entries.map(([, bytes]) => Number(bytes || 0) / 1048576);
+  const normalized = topApps || {};
+  appsChart.data.labels = Object.keys(normalized);
+  appsChart.data.datasets[0].data = Object.values(normalized).map((bytes) => Number(bytes || 0));
   appsChart.update();
 }
 

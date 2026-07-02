@@ -4,6 +4,7 @@ namespace App\Controller;
 
 use App\Entity\Client;
 use App\Entity\Device;
+use App\Service\ApplicationLabelResolver;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\JsonResponse;
@@ -14,7 +15,10 @@ use Symfony\Component\Routing\Attribute\Route;
 #[Route('/api')]
 class ApiController extends AbstractController
 {
-    public function __construct(private readonly EntityManagerInterface $em)
+    public function __construct(
+        private readonly EntityManagerInterface $em,
+        private readonly ApplicationLabelResolver $applicationLabelResolver,
+    )
     {
     }
 
@@ -243,19 +247,30 @@ class ApiController extends AbstractController
     private function topAppsFromFlows(): array
     {
         $rows = $this->em->getConnection()->fetchAllAssociative(
-            'SELECT protocol, dst_port dstPort, COALESCE(SUM(bytes), 0) totalBytes
+            'SELECT
+                CASE WHEN direction = :download THEN src_ip ELSE dst_ip END remoteIp,
+                CASE WHEN direction = :download THEN src_port ELSE dst_port END remotePort,
+                protocol,
+                COALESCE(SUM(bytes), 0) totalBytes
              FROM network_flow
              WHERE received_at BETWEEN :start AND :end
-             GROUP BY protocol, dst_port
+             GROUP BY remoteIp, remotePort, protocol
              ORDER BY totalBytes DESC
              LIMIT 10',
-            $this->todayRangeParameters()
+            ['download' => 'download'] + $this->todayRangeParameters()
         );
 
         $apps = [];
         foreach ($rows as $row) {
-            $apps[sprintf('%s/%s', $row['protocol'] ?? '-', $row['dstPort'] ?? '-')] = (int) $row['totalBytes'];
+            $label = $this->applicationLabelResolver->resolveFromFlow(
+                isset($row['protocol']) ? (int) $row['protocol'] : null,
+                isset($row['remotePort']) ? (int) $row['remotePort'] : null,
+                isset($row['remoteIp']) ? (string) $row['remoteIp'] : null
+            );
+            $apps[$label] = ($apps[$label] ?? 0) + (int) $row['totalBytes'];
         }
+
+        arsort($apps);
 
         return $apps;
     }
@@ -263,11 +278,13 @@ class ApiController extends AbstractController
     private function topDestinationsFromFlows(): array
     {
         $rows = $this->em->getConnection()->fetchAllAssociative(
-            'SELECT CASE WHEN direction = :download THEN src_ip ELSE dst_ip END destination, COALESCE(SUM(bytes), 0) totalBytes
+            'SELECT
+                CASE WHEN direction = :download THEN src_ip ELSE dst_ip END remoteIp,
+                COALESCE(SUM(bytes), 0) totalBytes
              FROM network_flow
              WHERE received_at BETWEEN :start AND :end
-             GROUP BY destination
-             HAVING destination IS NOT NULL
+             GROUP BY remoteIp
+             HAVING remoteIp IS NOT NULL
              ORDER BY totalBytes DESC
              LIMIT 10',
             ['download' => 'download'] + $this->todayRangeParameters()
@@ -275,16 +292,11 @@ class ApiController extends AbstractController
 
         $destinations = [];
         foreach ($rows as $row) {
-            $destination = (string) ($row['destination'] ?? '');
-            if ($destination === '') {
-                continue;
-            }
-
-            $destinations[] = [
-                'domain' => $destination,
-                'bytes' => (int) $row['totalBytes'],
-            ];
+            $label = $this->applicationLabelResolver->domainForIp(isset($row['remoteIp']) ? (string) $row['remoteIp'] : null) ?? 'Unknown';
+            $destinations[$label] = ($destinations[$label] ?? 0) + (int) $row['totalBytes'];
         }
+
+        arsort($destinations);
 
         return $destinations;
     }
