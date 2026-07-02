@@ -20,7 +20,19 @@ services:
       - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
       - php
-
+  netflow-worker:
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+    command: php bin/console app:netflow:listen --host=0.0.0.0 --port=2055
+    env_file: .env
+    volumes:
+      - ./:/var/www/html
+    ports:
+      - "2055:2055/udp"
+    depends_on:
+      database:
+        condition: service_healthy
   database:
     image: mariadb:11.4
     environment:
