@@ -9,7 +9,7 @@
 </div>
 <div class="grid two">
     <section class="panel"><h2>Активність за 30 днів</h2><canvas id="clientUsage" height="160"></canvas></section>
-    <section class="panel"><h2>Пристрої</h2><table><tr><th>MAC</th><th>IP</th><th>Ім'я хоста</th><th>VLAN</th></tr>{% for device in devices %}<tr><td><a href="{{ path('device_show',{id:device.id}) }}">{{ device.mac }}</a></td><td>{{ device.currentIp }}</td><td>{{ device.hostname }}</td><td>{{ device.vlan }}</td></tr>{% else %}<tr><td colspan="4">Немає даних</td></tr>{% endfor %}</table></section>
+    <section class="panel"><h2>Пристрої</h2><table><tr><th>MAC</th><th>IP</th><th>Ім'я хоста</th><th>VLAN</th><th>Коментар</th></tr>{% for device in devices %}<tr><td><a href="{{ path('device_show',{id:device.id}) }}">{{ device.mac }}</a></td><td>{{ device.currentIp }}</td><td>{{ device.hostname }}</td><td>{{ device.vlan }}</td><td>{{ device.comment ?: '-' }}</td></tr>{% else %}<tr><td colspan="5">Немає даних</td></tr>{% endfor %}</table></section>
 </div>
 <div class="grid two">
     <section class="panel">
@@ -78,10 +78,16 @@
 </div>
 {% endblock %}
 {% block scripts %}
+{% set usageLabels = [] %}
+{% set usageValues = [] %}
+{% for date, bytes in daily %}
+    {% set usageLabels = usageLabels|merge([date]) %}
+    {% set usageValues = usageValues|merge([(bytes / 1048576)|round(1)]) %}
+{% endfor %}
 <script>
 new Chart(document.getElementById('clientUsage'), {
   type: 'bar',
-  data: { labels: {{ daily|keys|json_encode|raw }}, datasets: [{ label: 'МБ', data: {{ daily|map(v => (v / 1048576)|round(1))|json_encode|raw }}, backgroundColor: '#0f766e' }] },
+  data: { labels: {{ usageLabels|json_encode|raw }}, datasets: [{ label: 'МБ', data: {{ usageValues|json_encode|raw }}, backgroundColor: '#0f766e' }] },
   options: { plugins: { legend: { display: false } } }
 });
 </script>

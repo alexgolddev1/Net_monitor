@@ -73,12 +73,13 @@ class AppController extends AbstractController
             $client = (new Client())
                 ->setFullName($request->request->get('full_name') ?: null)
                 ->setRoomNumber($request->request->get('room_number') ?: null)
-                ->setPhone($request->request->get('phone') ?: null)
-                ->setComment($request->request->get('comment') ?: null);
+                ->setPhone($request->request->get('phone') ?: null);
             $this->em->persist($client);
         }
 
-        $device->setClient($client);
+        $device
+            ->setClient($client)
+            ->setComment($this->normalizedInput($request->request->get('comment')));
         $this->em->flush();
         $this->addFlash('success', 'Device linked.');
 
@@ -467,8 +468,20 @@ class AppController extends AbstractController
 
     private function flowClientFilter(Client $client): array
     {
+        $deviceIds = array_values(array_filter(array_map(
+            fn (Device $device): ?int => $device->getId(),
+            $client->getDevices()->toArray()
+        )));
+
+        if ($deviceIds === []) {
+            return [
+                'where' => 'client_id = :clientId',
+                'params' => ['clientId' => $client->getId()],
+            ];
+        }
+
         return [
-            'where' => 'client_id = :clientId',
+            'where' => '(client_id = :clientId OR device_id IN ('.implode(',', array_map('intval', $deviceIds)).'))',
             'params' => ['clientId' => $client->getId()],
         ];
     }
@@ -572,6 +585,47 @@ class AppController extends AbstractController
     private function clientDailyUsage(Client $client, int $days): array
     {
         $rows = [];
+        $start = (new \DateTimeImmutable('today'))->modify('-'.($days - 1).' days');
+        $end = (new \DateTimeImmutable('today'))->setTime(23, 59, 59);
+
+        for ($day = 0; $day < $days; ++$day) {
+            $rows[$start->modify('+'.$day.' days')->format('Y-m-d')] = 0;
+        }
+
+        $deviceIds = array_values(array_filter(array_map(
+            fn (Device $device): ?int => $device->getId(),
+            $client->getDevices()->toArray()
+        )));
+
+        if ($deviceIds === []) {
+            return $rows;
+        }
+
+        $flowRows = $this->em->getConnection()->fetchAllAssociative(
+            'SELECT DATE(received_at) usageDate, COALESCE(SUM(bytes), 0) totalBytes
+             FROM network_flow
+             WHERE (client_id = :clientId OR device_id IN ('.implode(',', array_map('intval', $deviceIds)).'))
+               AND received_at BETWEEN :start AND :end
+             GROUP BY DATE(received_at)
+             ORDER BY usageDate ASC',
+            [
+                'clientId' => $client->getId(),
+                'start' => $start->setTime(0, 0)->format('Y-m-d H:i:s'),
+                'end' => $end->format('Y-m-d H:i:s'),
+            ]
+        );
+
+        foreach ($flowRows as $row) {
+            $key = (string) $row['usageDate'];
+            if (array_key_exists($key, $rows)) {
+                $rows[$key] = (int) $row['totalBytes'];
+            }
+        }
+
+        if (array_sum($rows) > 0) {
+            return $rows;
+        }
+
         foreach ($client->getDevices() as $device) {
             foreach ($this->dailyUsage($device, $days) as $usage) {
                 $key = $usage->getDate()->format('Y-m-d');
@@ -584,11 +638,21 @@ class AppController extends AbstractController
 
     private function clientFlows(Client $client, int $limit): array
     {
+        $filter = $this->flowClientFilter($client);
+        $rows = $this->em->getConnection()->fetchAllAssociative(
+            'SELECT id FROM network_flow WHERE '.$filter['where'].' ORDER BY received_at DESC LIMIT '.$limit,
+            $filter['params']
+        );
+        $ids = array_map(fn (array $row): int => (int) $row['id'], $rows);
+
+        if ($ids === []) {
+            return [];
+        }
+
         return $this->em->getRepository(NetworkFlow::class)->createQueryBuilder('f')
-            ->andWhere('f.client = :client')
-            ->setParameter('client', $client)
+            ->andWhere('f.id IN (:ids)')
+            ->setParameter('ids', $ids)
             ->orderBy('f.receivedAt', 'DESC')
-            ->setMaxResults($limit)
             ->getQuery()
             ->getResult();
     }

@@ -23,15 +23,43 @@
     <h2>Прив'язати {{ row.device.mac }}</h2>
     <form method="post" action="{{ path('device_link_client',{id:row.device.id}) }}">
         <label>Існуючий клієнт</label>
-        <select name="client_id"><option value="">Створити нового</option>{% for client in clients %}<option value="{{ client.id }}">{{ client.displayName }}{% if client.roomNumber %}, {{ client.roomNumber }}{% endif %}</option>{% endfor %}</select>
-        <div class="form-grid">
+        <select name="client_id" data-client-select><option value="">Створити нового</option>{% for client in clients %}<option value="{{ client.id }}" {% if row.device.client and row.device.client.id == client.id %}selected{% endif %}>{{ client.displayName }}{% if client.roomNumber %}, {{ client.roomNumber }}{% endif %}</option>{% endfor %}</select>
+        <div class="form-grid" data-new-client-fields>
             <div><label>ПІБ</label><input name="full_name"></div>
             <div><label>Кімната</label><input name="room_number"></div>
             <div><label>Телефон</label><input name="phone"></div>
         </div>
-        <label>Коментар</label><textarea name="comment"></textarea>
+        <label>Коментар до пристрою</label><textarea name="comment">{{ row.device.comment }}</textarea>
         <div style="margin-top:12px; display:flex; gap:8px;"><button>Зберегти</button><button type="button" class="secondary" onclick="this.closest('dialog').close()">Скасувати</button></div>
     </form>
 </dialog>
 {% endfor %}
+{% endblock %}
+{% block scripts %}
+<script>
+document.querySelectorAll('dialog[id^="link-"]').forEach((dialog) => {
+  const select = dialog.querySelector('[data-client-select]');
+  const newClientFields = dialog.querySelector('[data-new-client-fields]');
+  const inputs = newClientFields ? newClientFields.querySelectorAll('input') : [];
+
+  const syncClientFields = () => {
+    const useExistingClient = select && select.value !== '';
+    if (!newClientFields) {
+      return;
+    }
+    newClientFields.hidden = useExistingClient;
+    inputs.forEach((input) => {
+      input.disabled = useExistingClient;
+      if (useExistingClient) {
+        input.value = '';
+      }
+    });
+  };
+
+  if (select) {
+    select.addEventListener('change', syncClientFields);
+    syncClientFields();
+  }
+});
+</script>
 {% endblock %}

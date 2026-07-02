@@ -39,6 +39,9 @@ class Device
     #[ORM\Column(length: 180, nullable: true)]
     private ?string $deviceName = null;
 
+    #[ORM\Column(type: 'text', nullable: true)]
+    private ?string $comment = null;
+
     #[ORM\Column(nullable: true)]
     private ?\DateTimeImmutable $firstSeenAt = null;
 
@@ -89,6 +92,14 @@ class Device
     public function setVlan(?string $vlan): self { $this->vlan = $vlan; return $this; }
     public function getDeviceName(): ?string { return $this->deviceName; }
     public function setDeviceName(?string $deviceName): self { $this->deviceName = $deviceName; return $this; }
+    public function getComment(): ?string { return $this->comment; }
+    public function setComment(?string $comment): self
+    {
+        $comment = $comment !== null ? trim($comment) : null;
+        $this->comment = $comment === '' ? null : $comment;
+
+        return $this;
+    }
     public function getFirstSeenAt(): ?\DateTimeImmutable { return $this->firstSeenAt; }
     public function setFirstSeenAt(?\DateTimeImmutable $firstSeenAt): self { $this->firstSeenAt = $firstSeenAt; return $this; }
     public function getLastSeenAt(): ?\DateTimeImmutable { return $this->lastSeenAt; }
