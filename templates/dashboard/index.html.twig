@@ -1,58 +1,184 @@
 {% extends 'base.html.twig' %}
-{% block title %}Dashboard{% endblock %}
-{% block heading %}Dashboard{% endblock %}
+{% block title %}Панель{% endblock %}
+{% block heading %}Панель{% endblock %}
 {% block body %}
 <div class="grid stats">
-    <div class="stat"><div class="muted">Clients</div><div class="value">{{ clientCount }}</div></div>
-    <div class="stat"><div class="muted">Devices</div><div class="value">{{ deviceCount }}</div></div>
-    <div class="stat"><div class="muted">Unlinked</div><div class="value">{{ unlinkedCount }}</div></div>
-    <div class="stat"><div class="muted">Traffic today</div><div class="value">{{ (todayTraffic / 1048576)|number_format(1) }} MB</div></div>
+    <div class="stat"><div class="muted">Клієнти</div><div class="value" id="stat-clients">{{ clientCount }}</div></div>
+    <div class="stat"><div class="muted">Пристрої</div><div class="value" id="stat-devices">{{ deviceCount }}</div></div>
+    <div class="stat"><div class="muted">Без зв'язку</div><div class="value" id="stat-unlinked">{{ unlinkedCount }}</div></div>
+    <div class="stat"><div class="muted">Трафік за сьогодні</div><div class="value" id="stat-traffic">{{ (todayTraffic / 1048576)|number_format(1) }} МБ</div></div>
 </div>
 <div class="grid two">
     <section class="panel">
-        <h2>Top devices today</h2>
-        <table><tr><th>MAC</th><th>IP</th><th>Traffic</th></tr>
+        <h2>Топ пристроїв за сьогодні</h2>
+        <table>
+            <thead><tr><th>MAC</th><th>IP</th><th>Трафік</th></tr></thead>
+            <tbody id="top-devices-body">
             {% for row in topDevices %}
-                <tr><td><a href="{{ path('device_show',{id:row.device.id}) }}">{{ row.device.mac }}</a></td><td>{{ row.device.currentIp }}</td><td>{{ (row.today / 1048576)|number_format(1) }} MB</td></tr>
+                <tr><td><a href="{{ path('device_show',{id:row.device.id}) }}">{{ row.device.mac }}</a></td><td>{{ row.device.currentIp }}</td><td>{{ (row.today / 1048576)|number_format(1) }} МБ</td></tr>
             {% endfor %}
+            </tbody>
         </table>
     </section>
     <section class="panel">
-        <h2>Top clients today</h2>
-        <table><tr><th>Client</th><th>Room</th><th>Traffic</th></tr>
+        <h2>Топ клієнтів за сьогодні</h2>
+        <table>
+            <thead><tr><th>Клієнт</th><th>Кімната</th><th>Трафік</th></tr></thead>
+            <tbody id="top-clients-body">
             {% for row in topClients %}
-                <tr><td><a href="{{ path('client_show',{id:row.client.id}) }}">{{ row.client.displayName }}</a></td><td>{{ row.client.roomNumber }}</td><td>{{ (row.today / 1048576)|number_format(1) }} MB</td></tr>
+                <tr><td><a href="{{ path('client_show',{id:row.client.id}) }}">{{ row.client.displayName }}</a></td><td>{{ row.client.roomNumber }}</td><td>{{ (row.today / 1048576)|number_format(1) }} МБ</td></tr>
             {% endfor %}
+            </tbody>
         </table>
     </section>
     <section class="panel">
-        <h2>Top apps</h2>
+        <h2>Топ застосунків</h2>
         <canvas id="appsChart" height="150"></canvas>
     </section>
     <section class="panel">
-        <h2>Top domains</h2>
+        <h2>Топ доменів</h2>
         <table>
+            <tbody id="top-domains-body">
             {% for domain, bytes in topDomains %}
-                <tr><td><img class="favicon" src="https://www.google.com/s2/favicons?domain={{ domain }}&sz=64" alt="">{{ domain }}</td><td>{{ (bytes / 1048576)|number_format(1) }} MB</td></tr>
+                <tr><td><img class="favicon" src="https://www.google.com/s2/favicons?domain={{ domain }}&sz=64" alt="">{{ domain }}</td><td>{{ (bytes / 1048576)|number_format(1) }} МБ</td></tr>
             {% endfor %}
+            </tbody>
         </table>
     </section>
     <section class="panel">
-        <h2>Latest devices</h2>
-        <table><tr><th>MAC</th><th>Hostname</th><th>First seen</th></tr>
+        <h2>Останні пристрої</h2>
+        <table>
+            <thead><tr><th>MAC</th><th>Ім'я хоста</th><th>Вперше побачено</th></tr></thead>
+            <tbody id="latest-devices-body">
             {% for device in latestDevices %}
                 <tr><td>{{ device.mac }}</td><td>{{ device.hostname }}</td><td>{{ device.firstSeenAt ? device.firstSeenAt|date('Y-m-d H:i') : '-' }}</td></tr>
             {% endfor %}
+            </tbody>
         </table>
     </section>
 </div>
 {% endblock %}
 {% block scripts %}
 <script>
-new Chart(document.getElementById('appsChart'), {
+const appsChart = new Chart(document.getElementById('appsChart'), {
   type: 'bar',
-  data: { labels: {{ topApps|keys|json_encode|raw }}, datasets: [{ label: 'MB', data: {{ topApps|map(v => (v / 1048576)|round(1))|json_encode|raw }}, backgroundColor: '#0f766e' }] },
+  data: { labels: {{ topApps|keys|json_encode|raw }}, datasets: [{ label: 'МБ', data: {{ topApps|map(v => (v / 1048576)|round(1))|json_encode|raw }}, backgroundColor: '#0f766e' }] },
   options: { responsive: true, plugins: { legend: { display: false } } }
+});
+
+const dashboardStreamUrl = {{ path('api_dashboard_stream')|json_encode|raw }};
+const mbFormatter = new Intl.NumberFormat(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+
+function formatMb(bytes) {
+  return `${mbFormatter.format((Number(bytes) || 0) / 1048576)} МБ`;
+}
+
+function clearAndRender(tbody, rows) {
+  tbody.replaceChildren(...rows);
+}
+
+function textCell(text) {
+  const cell = document.createElement('td');
+  cell.textContent = text ?? '-';
+  return cell;
+}
+
+function linkCell(label, href) {
+  const cell = document.createElement('td');
+  const link = document.createElement('a');
+  link.href = href;
+  link.textContent = label;
+  cell.appendChild(link);
+  return cell;
+}
+
+function renderTopDevices(rows) {
+  const tbody = document.getElementById('top-devices-body');
+  const tr = rows.map((row) => {
+    const line = document.createElement('tr');
+    line.appendChild(linkCell(row.mac || '-', `/devices/${row.id}`));
+    line.appendChild(textCell(row.currentIp || '-'));
+    line.appendChild(textCell(formatMb(row.today)));
+    return line;
+  });
+  clearAndRender(tbody, tr);
+}
+
+function renderTopClients(rows) {
+  const tbody = document.getElementById('top-clients-body');
+  const tr = rows.map((row) => {
+    const line = document.createElement('tr');
+    line.appendChild(linkCell(row.displayName || '-', `/clients/${row.id}`));
+    line.appendChild(textCell(row.roomNumber || '-'));
+    line.appendChild(textCell(formatMb(row.today)));
+    return line;
+  });
+  clearAndRender(tbody, tr);
+}
+
+function renderTopDomains(rows) {
+  const tbody = document.getElementById('top-domains-body');
+  const tr = rows.map((row) => {
+    const line = document.createElement('tr');
+    const domainCell = document.createElement('td');
+    const icon = document.createElement('img');
+    icon.className = 'favicon';
+    icon.alt = '';
+    icon.src = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(row.domain)}&sz=64`;
+    domainCell.appendChild(icon);
+    domainCell.appendChild(document.createTextNode(row.domain || '-'));
+    line.appendChild(domainCell);
+    line.appendChild(textCell(formatMb(row.bytes)));
+    return line;
+  });
+  clearAndRender(tbody, tr);
+}
+
+function renderLatestDevices(rows) {
+  const tbody = document.getElementById('latest-devices-body');
+  const tr = rows.map((row) => {
+    const line = document.createElement('tr');
+    line.appendChild(textCell(row.mac || '-'));
+    line.appendChild(textCell(row.hostname || '-'));
+    line.appendChild(textCell(row.firstSeenAt ? new Date(row.firstSeenAt).toLocaleString() : '-'));
+    return line;
+  });
+  clearAndRender(tbody, tr);
+}
+
+function updateMetrics(data) {
+  document.getElementById('stat-clients').textContent = data.clients ?? 0;
+  document.getElementById('stat-devices').textContent = data.devices ?? 0;
+  document.getElementById('stat-unlinked').textContent = data.unlinkedDevices ?? 0;
+  document.getElementById('stat-traffic').textContent = formatMb(data.todayTraffic);
+}
+
+function updateAppsChart(topApps) {
+  const entries = Object.entries(topApps || {});
+  appsChart.data.labels = entries.map(([label]) => label);
+  appsChart.data.datasets[0].data = entries.map(([, bytes]) => Number(bytes || 0) / 1048576);
+  appsChart.update();
+}
+
+function applyDashboard(data) {
+  updateMetrics(data);
+  renderTopDevices(data.topDevices || []);
+  renderTopClients(data.topClients || []);
+  renderTopDomains(data.topDomains || []);
+  renderLatestDevices(data.latestDevices || []);
+  updateAppsChart(data.topApps || {});
+}
+
+const dashboardSource = new EventSource(dashboardStreamUrl);
+dashboardSource.addEventListener('dashboard', (event) => {
+  try {
+    applyDashboard(JSON.parse(event.data));
+  } catch (error) {
+    console.warn('Invalid dashboard payload', error);
+  }
+});
+dashboardSource.addEventListener('error', () => {
+  console.warn('Dashboard stream disconnected');
 });
 </script>
 {% endblock %}

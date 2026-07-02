@@ -3,21 +3,21 @@
 {% block heading %}{{ client.displayName }}{% endblock %}
 {% block body %}
 <div class="grid stats">
-    <div class="stat"><div class="muted">Room</div><div class="value">{{ client.roomNumber ?: '-' }}</div></div>
-    <div class="stat"><div class="muted">Phone</div><div class="value">{{ client.phone ?: '-' }}</div></div>
-    <div class="stat"><div class="muted">Devices</div><div class="value">{{ devices|length }}</div></div>
+    <div class="stat"><div class="muted">Кімната</div><div class="value">{{ client.roomNumber ?: '-' }}</div></div>
+    <div class="stat"><div class="muted">Телефон</div><div class="value">{{ client.phone ?: '-' }}</div></div>
+    <div class="stat"><div class="muted">Пристрої</div><div class="value">{{ devices|length }}</div></div>
 </div>
 <div class="grid two">
-    <section class="panel"><h2>30-day activity</h2><canvas id="clientUsage" height="160"></canvas></section>
-    <section class="panel"><h2>Devices</h2><table><tr><th>MAC</th><th>IP</th><th>Hostname</th><th>VLAN</th></tr>{% for device in devices %}<tr><td><a href="{{ path('device_show',{id:device.id}) }}">{{ device.mac }}</a></td><td>{{ device.currentIp }}</td><td>{{ device.hostname }}</td><td>{{ device.vlan }}</td></tr>{% endfor %}</table></section>
-    <section class="panel"><h2>Latest flows</h2><table><tr><th>Time</th><th>Device</th><th>Direction</th><th>Source</th><th>Destination</th><th>Total</th></tr>{% for f in flows %}<tr><td>{{ f.receivedAt|date('Y-m-d H:i') }}</td><td>{{ f.device ? f.device.mac : '-' }}</td><td>{{ f.direction }}</td><td>{{ f.srcIp }}{% if f.srcPort %}:{{ f.srcPort }}{% endif %}</td><td>{{ f.dstIp }}{% if f.dstPort %}:{{ f.dstPort }}{% endif %}</td><td>{{ (f.bytes / 1048576)|number_format(1) }} MB</td></tr>{% endfor %}</table></section>
+    <section class="panel"><h2>Активність за 30 днів</h2><canvas id="clientUsage" height="160"></canvas></section>
+    <section class="panel"><h2>Пристрої</h2><table><tr><th>MAC</th><th>IP</th><th>Ім'я хоста</th><th>VLAN</th></tr>{% for device in devices %}<tr><td><a href="{{ path('device_show',{id:device.id}) }}">{{ device.mac }}</a></td><td>{{ device.currentIp }}</td><td>{{ device.hostname }}</td><td>{{ device.vlan }}</td></tr>{% endfor %}</table></section>
+    <section class="panel"><h2>Останні потоки</h2><table><tr><th>Час</th><th>Пристрій</th><th>Напрямок</th><th>Джерело</th><th>Призначення</th><th>Обсяг</th></tr>{% for f in flows %}<tr><td>{{ f.receivedAt|date('Y-m-d H:i') }}</td><td>{{ f.device ? f.device.mac : '-' }}</td><td>{{ f.direction }}</td><td>{{ f.srcIp }}{% if f.srcPort %}:{{ f.srcPort }}{% endif %}</td><td>{{ f.dstIp }}{% if f.dstPort %}:{{ f.dstPort }}{% endif %}</td><td>{{ (f.bytes / 1048576)|number_format(1) }} МБ</td></tr>{% endfor %}</table></section>
 </div>
 {% endblock %}
 {% block scripts %}
 <script>
 new Chart(document.getElementById('clientUsage'), {
   type: 'bar',
-  data: { labels: {{ daily|keys|json_encode|raw }}, datasets: [{ label: 'MB', data: {{ daily|map(v => (v / 1048576)|round(1))|json_encode|raw }}, backgroundColor: '#0f766e' }] },
+  data: { labels: {{ daily|keys|json_encode|raw }}, datasets: [{ label: 'МБ', data: {{ daily|map(v => (v / 1048576)|round(1))|json_encode|raw }}, backgroundColor: '#0f766e' }] },
   options: { plugins: { legend: { display: false } } }
 });
 </script>

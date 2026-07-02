@@ -120,19 +120,107 @@ class AppController extends AbstractController
         $clientCount = $this->em->getRepository(Client::class)->count(['status' => 'active']);
         $deviceCount = $this->em->getRepository(Device::class)->count([]);
         $unlinked = $this->em->createQuery('SELECT COUNT(d.id) FROM App\Entity\Device d WHERE d.client IS NULL')->getSingleScalarResult();
-        $today = new \DateTimeImmutable('today');
 
         return [
             'clientCount' => $clientCount,
             'deviceCount' => $deviceCount,
             'unlinkedCount' => $unlinked,
-            'todayTraffic' => (int) $this->em->createQuery('SELECT COALESCE(SUM(u.totalBytes), 0) FROM App\Entity\DeviceDailyUsage u WHERE u.date = :today')->setParameter('today', $today)->getSingleScalarResult(),
-            'topDevices' => array_slice($this->deviceRows(), 0, 10),
-            'topClients' => array_slice($this->clientRows(), 0, 10),
-            'topApps' => $this->topJson('topAppsJson'),
-            'topDomains' => $this->topJson('topDestinationsJson'),
+            'todayTraffic' => $this->todayTrafficFromFlows(),
+            'topDevices' => $this->topDeviceRowsFromFlows(),
+            'topClients' => $this->topClientRowsFromFlows(),
+            'topApps' => $this->topAppsFromFlows(),
+            'topDomains' => $this->topDestinationsFromFlows(),
             'latestDevices' => $this->em->getRepository(Device::class)->findBy([], ['firstSeenAt' => 'DESC'], 10),
         ];
+    }
+
+    private function todayTrafficFromFlows(): int
+    {
+        return (int) $this->em->getConnection()->fetchOne(
+            'SELECT COALESCE(SUM(bytes), 0) FROM network_flow WHERE received_at BETWEEN :start AND :end',
+            $this->todayRangeParameters()
+        );
+    }
+
+    private function topDeviceRowsFromFlows(): array
+    {
+        $rows = $this->em->getConnection()->fetchAllAssociative(
+            'SELECT d.id, COALESCE(SUM(f.bytes), 0) totalBytes
+             FROM network_flow f
+             INNER JOIN device d ON d.id = f.device_id
+             WHERE f.received_at BETWEEN :start AND :end
+             GROUP BY d.id
+             ORDER BY totalBytes DESC
+             LIMIT 10',
+            $this->todayRangeParameters()
+        );
+
+        return array_values(array_filter(array_map(function (array $row): ?array {
+            $device = $this->em->getRepository(Device::class)->find((int) $row['id']);
+
+            return $device ? ['device' => $device, 'today' => (int) $row['totalBytes'], 'month' => $this->usageTotal($device, 30)] : null;
+        }, $rows)));
+    }
+
+    private function topClientRowsFromFlows(): array
+    {
+        $rows = $this->em->getConnection()->fetchAllAssociative(
+            'SELECT c.id, COALESCE(SUM(f.bytes), 0) totalBytes
+             FROM network_flow f
+             INNER JOIN client c ON c.id = f.client_id
+             WHERE f.received_at BETWEEN :start AND :end
+             GROUP BY c.id
+             ORDER BY totalBytes DESC
+             LIMIT 10',
+            $this->todayRangeParameters()
+        );
+
+        return array_values(array_filter(array_map(function (array $row): ?array {
+            $client = $this->em->getRepository(Client::class)->find((int) $row['id']);
+
+            return $client ? ['client' => $client, 'today' => (int) $row['totalBytes']] : null;
+        }, $rows)));
+    }
+
+    private function topAppsFromFlows(): array
+    {
+        $rows = $this->em->getConnection()->fetchAllAssociative(
+            'SELECT protocol, dst_port dstPort, COALESCE(SUM(bytes), 0) totalBytes
+             FROM network_flow
+             WHERE received_at BETWEEN :start AND :end
+             GROUP BY protocol, dst_port
+             ORDER BY totalBytes DESC
+             LIMIT 10',
+            $this->todayRangeParameters()
+        );
+
+        $apps = [];
+        foreach ($rows as $row) {
+            $apps[sprintf('%s/%s', $row['protocol'] ?? '-', $row['dstPort'] ?? '-')] = (int) $row['totalBytes'];
+        }
+
+        return $apps;
+    }
+
+    private function topDestinationsFromFlows(): array
+    {
+        $rows = $this->em->getConnection()->fetchAllAssociative(
+            'SELECT CASE WHEN direction = :download THEN src_ip ELSE dst_ip END destination, COALESCE(SUM(bytes), 0) totalBytes
+             FROM network_flow
+             WHERE received_at BETWEEN :start AND :end
+             GROUP BY destination
+             HAVING destination IS NOT NULL
+             ORDER BY totalBytes DESC
+             LIMIT 10',
+            ['download' => 'download'] + $this->todayRangeParameters()
+        );
+
+        $destinations = [];
+        foreach ($rows as $row) {
+            $destinations[$row['destination']] = (int) $row['totalBytes'];
+        }
+
+        return $destinations;
     }
 
     private function deviceRows(): array
@@ -175,7 +263,8 @@ class AppController extends AbstractController
     {
         $from = new \DateTimeImmutable(sprintf('-%d days', $days - 1));
         return (int) $this->em->createQuery('SELECT COALESCE(SUM(u.totalBytes), 0) FROM App\Entity\DeviceDailyUsage u WHERE u.device = :device AND u.date >= :from')
-            ->setParameters(['device' => $device, 'from' => $from])
+            ->setParameter('device', $device)
+            ->setParameter('from', $from)
             ->getSingleScalarResult();
     }
 
@@ -184,7 +273,8 @@ class AppController extends AbstractController
         return $this->em->getRepository(DeviceDailyUsage::class)->createQueryBuilder('u')
             ->andWhere('u.device = :device')
             ->andWhere('u.date >= :from')
-            ->setParameters(['device' => $device, 'from' => new \DateTimeImmutable('-'.($days - 1).' days')])
+            ->setParameter('device', $device)
+            ->setParameter('from', new \DateTimeImmutable('-'.($days - 1).' days'))
             ->orderBy('u.date', 'ASC')
             ->getQuery()
             ->getResult();
@@ -230,6 +320,16 @@ class AppController extends AbstractController
         }
         arsort($totals);
         return array_slice($totals, 0, 10, true);
+    }
+
+    private function todayRangeParameters(): array
+    {
+        $today = new \DateTimeImmutable('today');
+
+        return [
+            'start' => $today->setTime(0, 0)->format('Y-m-d H:i:s'),
+            'end' => $today->setTime(23, 59, 59)->format('Y-m-d H:i:s'),
+        ];
     }
 
     private function reportRows(\DateTimeImmutable $from): array

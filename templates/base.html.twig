@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ru">
+<html lang="uk">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -44,17 +44,17 @@
     <aside class="sidebar">
         <div class="brand">{{ app_name }}</div>
         <nav class="nav">
-            <a href="{{ path('dashboard') }}">Dashboard</a>
-            <a href="{{ path('clients') }}">Clients</a>
-            <a href="{{ path('devices') }}">Devices</a>
-            <a href="{{ path('reports') }}">Reports</a>
-            <a href="{{ path('app_logout') }}">Logout</a>
+            <a href="{{ path('dashboard') }}">Панель</a>
+            <a href="{{ path('clients') }}">Клієнти</a>
+            <a href="{{ path('devices') }}">Пристрої</a>
+            <a href="{{ path('reports') }}">Звіти</a>
+            <a href="{{ path('app_logout') }}">Вийти</a>
         </nav>
     </aside>
     <main class="content">
         <div class="topbar">
             <h1>{% block heading %}{{ app_name }}{% endblock %}</h1>
-            <span class="muted">MikroTik + ntopng MVP</span>
+            <span class="muted">MikroTik + моніторинг трафіку</span>
         </div>
         {% for message in app.flashes('success') %}
             <div class="flash">{{ message }}</div>
