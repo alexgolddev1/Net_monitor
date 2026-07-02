@@ -19,7 +19,7 @@ class AggregateDailyUsageCommand extends Command
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $count = $this->trafficAggregator->aggregateDaily();
-        $output->writeln(sprintf('Aggregated %d device daily rows.', $count));
+        $output->writeln(sprintf('Aggregated %d device daily rows from network_flow.', $count));
         return Command::SUCCESS;
     }
 }

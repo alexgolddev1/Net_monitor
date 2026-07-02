@@ -10,7 +10,7 @@
 <div class="grid two">
     <section class="panel"><h2>30-day activity</h2><canvas id="clientUsage" height="160"></canvas></section>
     <section class="panel"><h2>Devices</h2><table><tr><th>MAC</th><th>IP</th><th>Hostname</th><th>VLAN</th></tr>{% for device in devices %}<tr><td><a href="{{ path('device_show',{id:device.id}) }}">{{ device.mac }}</a></td><td>{{ device.currentIp }}</td><td>{{ device.hostname }}</td><td>{{ device.vlan }}</td></tr>{% endfor %}</table></section>
-    <section class="panel"><h2>Latest flows/snapshots</h2><table><tr><th>Time</th><th>IP</th><th>Total</th><th>Domains</th></tr>{% for s in snapshots %}<tr><td>{{ s.snapshotAt|date('Y-m-d H:i') }}</td><td>{{ s.ip }}</td><td>{{ (s.totalBytes / 1048576)|number_format(1) }} MB</td><td>{% for d in s.destinationsJson|slice(0,4) %}{{ d.domain }} {% endfor %}</td></tr>{% endfor %}</table></section>
+    <section class="panel"><h2>Latest flows</h2><table><tr><th>Time</th><th>Device</th><th>Direction</th><th>Source</th><th>Destination</th><th>Total</th></tr>{% for f in flows %}<tr><td>{{ f.receivedAt|date('Y-m-d H:i') }}</td><td>{{ f.device ? f.device.mac : '-' }}</td><td>{{ f.direction }}</td><td>{{ f.srcIp }}{% if f.srcPort %}:{{ f.srcPort }}{% endif %}</td><td>{{ f.dstIp }}{% if f.dstPort %}:{{ f.dstPort }}{% endif %}</td><td>{{ (f.bytes / 1048576)|number_format(1) }} MB</td></tr>{% endfor %}</table></section>
 </div>
 {% endblock %}
 {% block scripts %}

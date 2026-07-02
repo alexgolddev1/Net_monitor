@@ -4,6 +4,7 @@ namespace App\Command;
 
 use App\NetFlow\NetFlowV9Parser;
 use App\NetFlow\ParsedFlow;
+use Doctrine\DBAL\Connection;
 use Throwable;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
@@ -16,8 +17,19 @@ class NetflowListenCommand extends Command
 {
     private bool $running = true;
 
-    public function __construct(private readonly NetFlowV9Parser $parser)
-    {
+    /** @var list<array{network: int, mask: int}> */
+    private array $localNetworks;
+
+    /** @var array<string, array{device_id: int|null, client_id: int|null}> */
+    private array $deviceCacheByIp = [];
+
+    public function __construct(
+        private readonly NetFlowV9Parser $parser,
+        private readonly Connection $connection,
+        string $localSubnets,
+    ) {
+        $this->localNetworks = $this->parseLocalSubnets($localSubnets);
+
         parent::__construct();
     }
 
@@ -91,7 +103,9 @@ class NetflowListenCommand extends Command
                 }
 
                 if (count($flows) > 0) {
+                    $saved = $this->saveFlows($flows);
                     $output->writeln(sprintf('Parsed %d flows from %s', count($flows), $senderIp));
+                    $output->writeln(sprintf('Saved %d flows to network_flow', $saved));
                     foreach (array_slice($flows, 0, 5) as $flow) {
                         $output->writeln($this->formatFlow($flow));
                     }
@@ -101,7 +115,7 @@ class NetflowListenCommand extends Command
                     $output->writeln(sprintf('Parsed 0 flows from %s', $senderIp));
                 }
             } catch (Throwable $exception) {
-                $output->writeln(sprintf('<comment>NetFlow parsing warning: %s</comment>', $exception->getMessage()));
+                $output->writeln(sprintf('<comment>NetFlow handling warning: %s</comment>', $exception->getMessage()));
             }
         }
 
@@ -148,6 +162,149 @@ class NetflowListenCommand extends Command
     private function formatNullableInt(?int $value): string
     {
         return $value === null ? '-' : (string) $value;
+    }
+
+    /**
+     * @param list<ParsedFlow> $flows
+     */
+    private function saveFlows(array $flows): int
+    {
+        if ($flows === []) {
+            return 0;
+        }
+
+        $receivedAt = new \DateTimeImmutable();
+        $saved = 0;
+
+        $this->connection->transactional(function () use ($flows, $receivedAt, &$saved): void {
+            foreach ($flows as $flow) {
+                $direction = $this->detectDirection($flow);
+                $deviceMatch = $this->matchDevice($flow, $direction);
+
+                $this->connection->insert('network_flow', [
+                    'exporter_ip' => $flow->exporterIp,
+                    'src_ip' => $flow->srcIPv4,
+                    'dst_ip' => $flow->dstIPv4,
+                    'src_port' => $flow->srcPort,
+                    'dst_port' => $flow->dstPort,
+                    'protocol' => $flow->protocol,
+                    'bytes' => $flow->bytes,
+                    'packets' => $flow->packets,
+                    'input_interface' => $flow->inputInterface,
+                    'output_interface' => $flow->outputInterface,
+                    'first_seen_at' => $this->formatDateTime($flow->firstSeen),
+                    'last_seen_at' => $this->formatDateTime($flow->lastSeen),
+                    'received_at' => $this->formatDateTime($receivedAt),
+                    'device_id' => $deviceMatch['device_id'],
+                    'client_id' => $deviceMatch['client_id'],
+                    'direction' => $direction,
+                ]);
+                $saved++;
+            }
+        });
+
+        return $saved;
+    }
+
+    private function detectDirection(ParsedFlow $flow): string
+    {
+        $srcLocal = $flow->srcIPv4 !== null && $this->isLocalIp($flow->srcIPv4);
+        $dstLocal = $flow->dstIPv4 !== null && $this->isLocalIp($flow->dstIPv4);
+
+        if ($srcLocal && !$dstLocal) {
+            return 'upload';
+        }
+
+        if ($dstLocal && !$srcLocal) {
+            return 'download';
+        }
+
+        if ($srcLocal && $dstLocal) {
+            return 'local';
+        }
+
+        return 'external';
+    }
+
+    /**
+     * @return array{device_id: int|null, client_id: int|null}
+     */
+    private function matchDevice(ParsedFlow $flow, string $direction): array
+    {
+        $ip = match ($direction) {
+            'upload' => $flow->srcIPv4,
+            'download' => $flow->dstIPv4,
+            'local' => $flow->srcIPv4 ?? $flow->dstIPv4,
+            default => null,
+        };
+
+        if ($ip === null) {
+            return ['device_id' => null, 'client_id' => null];
+        }
+
+        if (array_key_exists($ip, $this->deviceCacheByIp)) {
+            return $this->deviceCacheByIp[$ip];
+        }
+
+        $row = $this->connection->fetchAssociative(
+            'SELECT d.id device_id, d.client_id client_id FROM device d WHERE d.current_ip = :ip LIMIT 1',
+            ['ip' => $ip]
+        );
+
+        $match = [
+            'device_id' => $row === false ? null : (int) $row['device_id'],
+            'client_id' => $row === false || $row['client_id'] === null ? null : (int) $row['client_id'],
+        ];
+        $this->deviceCacheByIp[$ip] = $match;
+
+        return $match;
+    }
+
+    private function formatDateTime(?\DateTimeImmutable $dateTime): ?string
+    {
+        return $dateTime?->format('Y-m-d H:i:s');
+    }
+
+    /**
+     * @return list<array{network: int, mask: int}>
+     */
+    private function parseLocalSubnets(string $localSubnets): array
+    {
+        $networks = [];
+
+        foreach (array_filter(array_map('trim', explode(',', $localSubnets))) as $cidr) {
+            [$network, $prefix] = array_pad(explode('/', $cidr, 2), 2, '32');
+            $networkLong = ip2long($network);
+
+            if ($networkLong === false || !is_numeric($prefix)) {
+                continue;
+            }
+
+            $prefixLength = max(0, min(32, (int) $prefix));
+            $mask = $prefixLength === 0 ? 0 : ((-1 << (32 - $prefixLength)) & 0xFFFFFFFF);
+            $networks[] = [
+                'network' => ip2long(long2ip($networkLong & $mask)),
+                'mask' => $mask,
+            ];
+        }
+
+        return $networks;
+    }
+
+    private function isLocalIp(string $ip): bool
+    {
+        $ipLong = ip2long($ip);
+        if ($ipLong === false) {
+            return false;
+        }
+
+        foreach ($this->localNetworks as $network) {
+            if (($ipLong & $network['mask']) === $network['network']) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function registerSignalHandlers(OutputInterface $output): void

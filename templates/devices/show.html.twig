@@ -11,7 +11,7 @@
 <div class="grid two">
     <section class="panel"><h2>30-day usage</h2><canvas id="usageChart" height="160"></canvas></section>
     <section class="panel"><h2>IP history</h2><table><tr><th>IP</th><th>First</th><th>Last</th></tr>{% for h in ipHistory %}<tr><td>{{ h.ip }}</td><td>{{ h.firstSeenAt|date('Y-m-d H:i') }}</td><td>{{ h.lastSeenAt|date('Y-m-d H:i') }}</td></tr>{% endfor %}</table></section>
-    <section class="panel"><h2>Latest snapshots</h2><table><tr><th>Time</th><th>In</th><th>Out</th><th>Top destinations</th></tr>{% for s in snapshots %}<tr><td>{{ s.snapshotAt|date('Y-m-d H:i') }}</td><td>{{ (s.bytesIn / 1048576)|number_format(1) }} MB</td><td>{{ (s.bytesOut / 1048576)|number_format(1) }} MB</td><td>{% for d in s.destinationsJson|slice(0,3) %}{{ d.domain }} {% endfor %}</td></tr>{% endfor %}</table></section>
+    <section class="panel"><h2>Latest flows</h2><table><tr><th>Time</th><th>Direction</th><th>Source</th><th>Destination</th><th>Total</th></tr>{% for f in flows %}<tr><td>{{ f.receivedAt|date('Y-m-d H:i') }}</td><td>{{ f.direction }}</td><td>{{ f.srcIp }}{% if f.srcPort %}:{{ f.srcPort }}{% endif %}</td><td>{{ f.dstIp }}{% if f.dstPort %}:{{ f.dstPort }}{% endif %}</td><td>{{ (f.bytes / 1048576)|number_format(1) }} MB</td></tr>{% endfor %}</table></section>
 </div>
 {% endblock %}
 {% block scripts %}

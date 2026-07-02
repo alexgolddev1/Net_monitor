@@ -6,7 +6,7 @@ use App\Entity\Client;
 use App\Entity\Device;
 use App\Entity\DeviceDailyUsage;
 use App\Entity\DeviceIpHistory;
-use App\Entity\TrafficSnapshot;
+use App\Entity\NetworkFlow;
 use App\Service\TrafficAggregator;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
@@ -48,7 +48,7 @@ class AppController extends AbstractController
         return $this->render('devices/show.html.twig', [
             'device' => $device,
             'ipHistory' => $this->em->getRepository(DeviceIpHistory::class)->findBy(['device' => $device], ['lastSeenAt' => 'DESC'], 20),
-            'snapshots' => $this->em->getRepository(TrafficSnapshot::class)->findBy(['device' => $device], ['snapshotAt' => 'DESC'], 20),
+            'flows' => $this->em->getRepository(NetworkFlow::class)->findBy(['device' => $device], ['receivedAt' => 'DESC'], 20),
             'todayBytes' => $aggregator->totalsForDevice($device, 1),
             'monthBytes' => $aggregator->totalsForDevice($device, 30),
             'daily' => $this->dailyUsage($device, 30),
@@ -90,7 +90,7 @@ class AppController extends AbstractController
             'client' => $client,
             'devices' => $client->getDevices(),
             'daily' => $this->clientDailyUsage($client, 30),
-            'snapshots' => $this->clientSnapshots($client, 30),
+            'flows' => $this->clientFlows($client, 30),
         ]);
     }
 
@@ -144,7 +144,6 @@ class AppController extends AbstractController
                 'device' => $device,
                 'today' => $this->usageTotal($device, 1),
                 'month' => $this->usageTotal($device, 30),
-                'lastSnapshot' => $this->em->getRepository(TrafficSnapshot::class)->findOneBy(['device' => $device], ['snapshotAt' => 'DESC']),
             ];
         }
         usort($rows, fn ($a, $b) => $b['today'] <=> $a['today']);
@@ -204,16 +203,12 @@ class AppController extends AbstractController
         return $rows;
     }
 
-    private function clientSnapshots(Client $client, int $limit): array
+    private function clientFlows(Client $client, int $limit): array
     {
-        $deviceIds = array_map(fn (Device $device) => $device->getId(), $client->getDevices()->toArray());
-        if (!$deviceIds) {
-            return [];
-        }
-        return $this->em->getRepository(TrafficSnapshot::class)->createQueryBuilder('s')
-            ->andWhere('s.device IN (:ids)')
-            ->setParameter('ids', $deviceIds)
-            ->orderBy('s.snapshotAt', 'DESC')
+        return $this->em->getRepository(NetworkFlow::class)->createQueryBuilder('f')
+            ->andWhere('f.client = :client')
+            ->setParameter('client', $client)
+            ->orderBy('f.receivedAt', 'DESC')
             ->setMaxResults($limit)
             ->getQuery()
             ->getResult();
