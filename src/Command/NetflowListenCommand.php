@@ -2,6 +2,9 @@
 
 namespace App\Command;
 
+use App\NetFlow\NetFlowV9Parser;
+use App\NetFlow\ParsedFlow;
+use Throwable;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
@@ -12,6 +15,11 @@ use Symfony\Component\Console\Output\OutputInterface;
 class NetflowListenCommand extends Command
 {
     private bool $running = true;
+
+    public function __construct(private readonly NetFlowV9Parser $parser)
+    {
+        parent::__construct();
+    }
 
     protected function configure(): void
     {
@@ -65,17 +73,81 @@ class NetflowListenCommand extends Command
                 continue;
             }
 
+            $senderAddress = $sender ?? 'unknown';
+            $senderIp = $this->extractSenderIp($senderAddress);
+
             $output->writeln(sprintf(
                 'Packet size=%d sender=%s first20=%s',
                 strlen($packet),
-                $sender ?? 'unknown',
+                $senderAddress,
                 bin2hex(substr($packet, 0, 20))
             ));
+
+            try {
+                $flows = $this->parser->parse($packet, $senderIp);
+
+                foreach ($this->parser->lastWarnings() as $warning) {
+                    $output->writeln(sprintf('<comment>%s</comment>', $warning));
+                }
+
+                if (count($flows) > 0) {
+                    $output->writeln(sprintf('Parsed %d flows from %s', count($flows), $senderIp));
+                    foreach (array_slice($flows, 0, 5) as $flow) {
+                        $output->writeln($this->formatFlow($flow));
+                    }
+                } elseif ($this->parser->parsedTemplatesInLastPacket() > 0) {
+                    $output->writeln('Parsed templates, no data flows yet');
+                } else {
+                    $output->writeln(sprintf('Parsed 0 flows from %s', $senderIp));
+                }
+            } catch (Throwable $exception) {
+                $output->writeln(sprintf('<comment>NetFlow parsing warning: %s</comment>', $exception->getMessage()));
+            }
         }
 
         fclose($socket);
 
         return Command::SUCCESS;
+    }
+
+    private function extractSenderIp(string $sender): string
+    {
+        if ($sender === 'unknown') {
+            return $sender;
+        }
+
+        if (str_starts_with($sender, '[')) {
+            $closingBracketPosition = strpos($sender, ']');
+
+            return $closingBracketPosition === false ? $sender : substr($sender, 1, $closingBracketPosition - 1);
+        }
+
+        $lastColonPosition = strrpos($sender, ':');
+
+        return $lastColonPosition === false ? $sender : substr($sender, 0, $lastColonPosition);
+    }
+
+    private function formatFlow(ParsedFlow $flow): string
+    {
+        return sprintf(
+            'flow src=%s dst=%s bytes=%s packets=%s protocol=%s srcPort=%s dstPort=%s inputInterface=%s outputInterface=%s firstSeen=%s lastSeen=%s',
+            $flow->srcIPv4 ?? '-',
+            $flow->dstIPv4 ?? '-',
+            $this->formatNullableInt($flow->bytes),
+            $this->formatNullableInt($flow->packets),
+            $this->formatNullableInt($flow->protocol),
+            $this->formatNullableInt($flow->srcPort),
+            $this->formatNullableInt($flow->dstPort),
+            $this->formatNullableInt($flow->inputInterface),
+            $this->formatNullableInt($flow->outputInterface),
+            $flow->firstSeen?->format('Y-m-d H:i:s.u') ?? '-',
+            $flow->lastSeen?->format('Y-m-d H:i:s.u') ?? '-',
+        );
+    }
+
+    private function formatNullableInt(?int $value): string
+    {
+        return $value === null ? '-' : (string) $value;
     }
 
     private function registerSignalHandlers(OutputInterface $output): void
