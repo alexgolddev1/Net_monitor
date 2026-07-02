@@ -91,6 +91,63 @@ class AppController extends AbstractController
         return $this->render('clients/index.html.twig', ['clients' => $this->clientRows()]);
     }
 
+    #[Route('/clients', name: 'client_create', methods: ['POST'])]
+    public function createClient(Request $request): Response
+    {
+        if (!$this->isCsrfTokenValid('client_create', (string) $request->request->get('_csrf_token'))) {
+            throw $this->createAccessDeniedException('Invalid CSRF token.');
+        }
+
+        $client = (new Client())
+            ->setFullName($this->normalizedInput($request->request->get('full_name')))
+            ->setRoomNumber($this->normalizedInput($request->request->get('room_number')))
+            ->setPhone($this->normalizedInput($request->request->get('phone')))
+            ->setComment($this->normalizedInput($request->request->get('comment')));
+
+        $this->em->persist($client);
+        $this->em->flush();
+        $this->addFlash('success', 'Client created.');
+
+        return $this->redirectToRoute('clients');
+    }
+
+    #[Route('/clients/{id}/edit', name: 'client_update', methods: ['POST'], requirements: ['id' => '\d+'])]
+    public function updateClient(Client $client, Request $request): Response
+    {
+        if (!$this->isCsrfTokenValid('client_update_'.$client->getId(), (string) $request->request->get('_csrf_token'))) {
+            throw $this->createAccessDeniedException('Invalid CSRF token.');
+        }
+
+        $client
+            ->setFullName($this->normalizedInput($request->request->get('full_name')))
+            ->setRoomNumber($this->normalizedInput($request->request->get('room_number')))
+            ->setPhone($this->normalizedInput($request->request->get('phone')))
+            ->setComment($this->normalizedInput($request->request->get('comment')));
+
+        if ($status = $this->normalizedInput($request->request->get('status'))) {
+            $client->setStatus($status);
+        }
+
+        $this->em->flush();
+        $this->addFlash('success', 'Client updated.');
+
+        return $this->redirectToRoute('clients');
+    }
+
+    #[Route('/clients/{id}/delete', name: 'client_delete', methods: ['POST'], requirements: ['id' => '\d+'])]
+    public function deleteClient(Client $client, Request $request): Response
+    {
+        if (!$this->isCsrfTokenValid('client_delete_'.$client->getId(), (string) $request->request->get('_csrf_token'))) {
+            throw $this->createAccessDeniedException('Invalid CSRF token.');
+        }
+
+        $this->em->remove($client);
+        $this->em->flush();
+        $this->addFlash('success', 'Client deleted.');
+
+        return $this->redirectToRoute('clients');
+    }
+
     #[Route('/clients/{id}', name: 'client_show', requirements: ['id' => '\d+'])]
     public function client(Client $client): Response
     {
@@ -198,12 +255,14 @@ class AppController extends AbstractController
     {
         $rows = $this->em->getConnection()->fetchAllAssociative(
             'SELECT
-                COALESCE(NULLIF(app_name, \'\'), \'Unknown\') appName,
+                app_name appName,
                 COALESCE(SUM(bytes), 0) totalBytes
              FROM network_flow
              WHERE received_at BETWEEN :start AND :end
+               AND app_name IS NOT NULL
+               AND LOWER(app_name) <> \'unknown\'
              GROUP BY appName
-             ORDER BY (appName = \'Unknown\') ASC, totalBytes DESC
+             ORDER BY totalBytes DESC
              LIMIT 10',
             $this->todayRangeParameters()
         );
@@ -212,6 +271,16 @@ class AppController extends AbstractController
         foreach ($rows as $row) {
             $label = $this->normalizeAppName(isset($row['appName']) ? (string) $row['appName'] : null);
             $apps[$label] = ($apps[$label] ?? 0) + (int) $row['totalBytes'];
+        }
+
+        if (count($apps) < 10) {
+            $unknown = (int) $this->em->getConnection()->fetchOne(
+                'SELECT COALESCE(SUM(bytes), 0) FROM network_flow WHERE received_at BETWEEN :start AND :end AND (app_name IS NULL OR LOWER(app_name) = \'unknown\')',
+                $this->todayRangeParameters()
+            );
+            if ($unknown > 0 && $apps === []) {
+                $apps['Unknown'] = $unknown;
+            }
         }
 
         return $apps;
@@ -225,8 +294,9 @@ class AppController extends AbstractController
                 COALESCE(SUM(bytes), 0) totalBytes
              FROM network_flow
              WHERE received_at BETWEEN :start AND :end
+               AND domain IS NOT NULL
+               AND LOWER(domain) <> \'unknown\'
              GROUP BY domain
-             HAVING domain IS NOT NULL AND LOWER(domain) <> \'unknown\'
              ORDER BY totalBytes DESC
              LIMIT 10',
             $this->todayRangeParameters()
@@ -326,11 +396,13 @@ class AppController extends AbstractController
     private function topApps(array $filter, int $limit): array
     {
         $rows = $this->em->getConnection()->fetchAllAssociative(
-            'SELECT COALESCE(NULLIF(app_name, \'\'), \'Unknown\') appName, COALESCE(SUM(bytes), 0) totalBytes
+            'SELECT app_name appName, COALESCE(SUM(bytes), 0) totalBytes
              FROM network_flow
              WHERE '.$filter['where'].' AND received_at BETWEEN :start AND :end
+               AND app_name IS NOT NULL
+               AND LOWER(app_name) <> \'unknown\'
              GROUP BY appName
-             ORDER BY (appName = \'Unknown\') ASC, totalBytes DESC
+             ORDER BY totalBytes DESC
              LIMIT '.$limit,
             $filter['params'] + $this->todayRangeParameters()
         );
@@ -339,6 +411,16 @@ class AppController extends AbstractController
         foreach ($rows as $row) {
             $label = $this->normalizeAppName(isset($row['appName']) ? (string) $row['appName'] : null);
             $apps[$label] = ($apps[$label] ?? 0) + (int) $row['totalBytes'];
+        }
+
+        if ($apps === []) {
+            $unknown = (int) $this->em->getConnection()->fetchOne(
+                'SELECT COALESCE(SUM(bytes), 0) FROM network_flow WHERE '.$filter['where'].' AND received_at BETWEEN :start AND :end AND (app_name IS NULL OR LOWER(app_name) = \'unknown\')',
+                $filter['params'] + $this->todayRangeParameters()
+            );
+            if ($unknown > 0) {
+                $apps['Unknown'] = $unknown;
+            }
         }
 
         return $apps;
@@ -569,5 +651,12 @@ class AppController extends AbstractController
         $response->headers->set('Content-Type', 'text/csv; charset=UTF-8');
         $response->headers->set('Content-Disposition', 'attachment; filename="'.$filename.'"');
         return $response;
+    }
+
+    private function normalizedInput(mixed $value): ?string
+    {
+        $value = trim((string) $value);
+
+        return $value === '' ? null : $value;
     }
 }

@@ -246,12 +246,14 @@ class ApiController extends AbstractController
     {
         $rows = $this->em->getConnection()->fetchAllAssociative(
             'SELECT
-                COALESCE(NULLIF(app_name, \'\'), \'Unknown\') appName,
+                app_name appName,
                 COALESCE(SUM(bytes), 0) totalBytes
              FROM network_flow
              WHERE received_at BETWEEN :start AND :end
+               AND app_name IS NOT NULL
+               AND LOWER(app_name) <> \'unknown\'
              GROUP BY appName
-             ORDER BY (appName = \'Unknown\') ASC, totalBytes DESC
+             ORDER BY totalBytes DESC
              LIMIT 10',
             $this->todayRangeParameters()
         );
@@ -260,6 +262,16 @@ class ApiController extends AbstractController
         foreach ($rows as $row) {
             $label = $this->normalizeAppName(isset($row['appName']) ? (string) $row['appName'] : null);
             $apps[$label] = ($apps[$label] ?? 0) + (int) $row['totalBytes'];
+        }
+
+        if ($apps === []) {
+            $unknown = (int) $this->em->getConnection()->fetchOne(
+                'SELECT COALESCE(SUM(bytes), 0) FROM network_flow WHERE received_at BETWEEN :start AND :end AND (app_name IS NULL OR LOWER(app_name) = \'unknown\')',
+                $this->todayRangeParameters()
+            );
+            if ($unknown > 0) {
+                $apps['Unknown'] = $unknown;
+            }
         }
 
         return $apps;
@@ -273,8 +285,9 @@ class ApiController extends AbstractController
                 COALESCE(SUM(bytes), 0) totalBytes
              FROM network_flow
              WHERE received_at BETWEEN :start AND :end
+               AND domain IS NOT NULL
+               AND LOWER(domain) <> \'unknown\'
              GROUP BY domain
-             HAVING domain IS NOT NULL AND LOWER(domain) <> \'unknown\'
              ORDER BY totalBytes DESC
              LIMIT 10',
             $this->todayRangeParameters()

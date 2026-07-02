@@ -2,8 +2,11 @@
 {% block title %}Клієнти{% endblock %}
 {% block heading %}Клієнти{% endblock %}
 {% block body %}
+<div style="display:flex; justify-content:flex-end; margin-bottom:12px;">
+    <button type="button" onclick="document.getElementById('client-create').showModal()">Додати клієнта</button>
+</div>
 <table>
-    <tr><th>ПІБ</th><th>Кімната</th><th>Телефон</th><th>Пристрої</th><th>Сьогодні</th><th>Місяць</th><th>Остання активність</th></tr>
+    <tr><th>ПІБ</th><th>Кімната</th><th>Телефон</th><th>Пристрої</th><th>Сьогодні</th><th>Місяць</th><th>Остання активність</th><th>Дії</th></tr>
     {% for row in clients %}
         <tr>
             <td><a href="{{ path('client_show',{id:row.client.id}) }}">{{ row.client.displayName }}</a></td>
@@ -13,7 +16,90 @@
             <td>{{ (row.today / 1048576)|number_format(1) }} МБ</td>
             <td>{{ (row.month / 1048576)|number_format(1) }} МБ</td>
             <td>{{ row.lastSeen ? row.lastSeen|date('Y-m-d H:i') : '-' }}</td>
+            <td>
+                <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                    <button type="button" class="secondary" onclick="document.getElementById('client-edit-{{ row.client.id }}').showModal()">Редагувати</button>
+                    <button type="button" class="secondary" onclick="document.getElementById('client-delete-{{ row.client.id }}').showModal()">Видалити</button>
+                </div>
+            </td>
         </tr>
     {% endfor %}
 </table>
+
+<dialog id="client-create" class="panel">
+    <h2>Додати клієнта</h2>
+    <form method="post" action="{{ path('client_create') }}">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token('client_create') }}">
+        <div class="form-grid two">
+            <div>
+                <label>ПІБ</label>
+                <input name="full_name" placeholder="Наприклад, Іван Петренко">
+            </div>
+            <div>
+                <label>Кімната</label>
+                <input name="room_number" placeholder="Наприклад, 101">
+            </div>
+            <div>
+                <label>Телефон</label>
+                <input name="phone" placeholder="+380...">
+            </div>
+            <div>
+                <label>Коментар</label>
+                <input name="comment" placeholder="Додаткова примітка">
+            </div>
+        </div>
+        <div style="margin-top:12px; display:flex; gap:8px;">
+            <button type="submit">Зберегти</button>
+            <button type="button" class="secondary" onclick="this.closest('dialog').close()">Скасувати</button>
+        </div>
+    </form>
+</dialog>
+
+{% for row in clients %}
+<dialog id="client-edit-{{ row.client.id }}" class="panel">
+    <h2>Редагувати клієнта</h2>
+    <form method="post" action="{{ path('client_update', {id: row.client.id}) }}">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token('client_update_' ~ row.client.id) }}">
+        <div class="form-grid two">
+            <div>
+                <label>ПІБ</label>
+                <input name="full_name" value="{{ row.client.fullName }}">
+            </div>
+            <div>
+                <label>Кімната</label>
+                <input name="room_number" value="{{ row.client.roomNumber }}">
+            </div>
+            <div>
+                <label>Телефон</label>
+                <input name="phone" value="{{ row.client.phone }}">
+            </div>
+            <div>
+                <label>Статус</label>
+                <select name="status">
+                    <option value="active" {% if row.client.status == 'active' %}selected{% endif %}>active</option>
+                    <option value="inactive" {% if row.client.status == 'inactive' %}selected{% endif %}>inactive</option>
+                </select>
+            </div>
+        </div>
+        <label>Коментар</label>
+        <textarea name="comment" rows="4">{{ row.client.comment }}</textarea>
+        <div style="margin-top:12px; display:flex; gap:8px;">
+            <button type="submit">Зберегти</button>
+            <button type="button" class="secondary" onclick="this.closest('dialog').close()">Скасувати</button>
+        </div>
+    </form>
+</dialog>
+
+<dialog id="client-delete-{{ row.client.id }}" class="panel">
+    <h2>Видалити клієнта</h2>
+    <p>Ви впевнені, що хочете видалити <strong>{{ row.client.displayName }}</strong>?</p>
+    <form method="post" action="{{ path('client_delete', {id: row.client.id}) }}">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token('client_delete_' ~ row.client.id) }}">
+        <div style="margin-top:12px; display:flex; gap:8px;">
+            <button type="submit">Видалити</button>
+            <button type="button" class="secondary" onclick="this.closest('dialog').close()">Скасувати</button>
+        </div>
+    </form>
+</dialog>
+{% endfor %}
 {% endblock %}

@@ -159,12 +159,15 @@ class TrafficAggregator
     {
         $rows = $this->connection->fetchAllAssociative(
             'SELECT
-                COALESCE(NULLIF(app_name, \'\'), \'Unknown\') appName,
+                app_name appName,
                 COALESCE(SUM(bytes), 0) bytes
              FROM network_flow
-             WHERE device_id = :deviceId AND received_at BETWEEN :start AND :end
+             WHERE device_id = :deviceId
+               AND received_at BETWEEN :start AND :end
+               AND app_name IS NOT NULL
+               AND LOWER(app_name) <> \'unknown\'
              GROUP BY appName
-             ORDER BY (appName = \'Unknown\') ASC, bytes DESC
+             ORDER BY bytes DESC
              LIMIT 10',
             [
                 'deviceId' => $device->getId(),
@@ -179,6 +182,20 @@ class TrafficAggregator
             $totals[$label] = ($totals[$label] ?? 0) + (int) $row['bytes'];
         }
 
+        if ($totals === []) {
+            $unknown = (int) $this->connection->fetchOne(
+                'SELECT COALESCE(SUM(bytes), 0) FROM network_flow WHERE device_id = :deviceId AND received_at BETWEEN :start AND :end AND (app_name IS NULL OR LOWER(app_name) = \'unknown\')',
+                [
+                    'deviceId' => $device->getId(),
+                    'start' => $start->format('Y-m-d H:i:s'),
+                    'end' => $end->format('Y-m-d H:i:s'),
+                ]
+            );
+            if ($unknown > 0) {
+                $totals['Unknown'] = $unknown;
+            }
+        }
+
         return array_map(
             fn (string $name, int $bytes): array => ['name' => $name, 'bytes' => $bytes],
             array_keys(array_slice($totals, 0, 10, true)),
@@ -189,11 +206,13 @@ class TrafficAggregator
     public function topDestinationsFromFlows(Device $device, \DateTimeImmutable $start, \DateTimeImmutable $end): array
     {
         $rows = $this->connection->fetchAllAssociative(
-            'SELECT COALESCE(NULLIF(domain, \'\'), \'Unknown\') domain, COALESCE(SUM(bytes), 0) bytes
+            'SELECT domain, COALESCE(SUM(bytes), 0) bytes
              FROM network_flow
-             WHERE device_id = :deviceId AND received_at BETWEEN :start AND :end
+             WHERE device_id = :deviceId
+               AND received_at BETWEEN :start AND :end
+               AND domain IS NOT NULL
+               AND LOWER(domain) <> \'unknown\'
              GROUP BY domain
-             HAVING domain IS NOT NULL AND LOWER(domain) <> \'unknown\'
              ORDER BY bytes DESC
              LIMIT 10',
             [
