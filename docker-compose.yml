@@ -49,17 +49,5 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
-
-  ntopng:
-    image: ntop/ntopng:latest
-    restart: unless-stopped
-    network_mode: host
-    command: [ "--community", "--http-port=3000", "-i", "eth0" ]
-    cap_add:
-      - NET_ADMIN
-      - NET_RAW
-    volumes:
-      - ntopng_data:/var/lib/ntopng
 volumes:
   db_data:
-  ntopng_data:

@@ -10,8 +10,72 @@
 </div>
 <div class="grid two">
     <section class="panel"><h2>Активність за 30 днів</h2><canvas id="usageChart" height="160"></canvas></section>
-    <section class="panel"><h2>Історія IP</h2><table><tr><th>IP</th><th>Перше</th><th>Останнє</th></tr>{% for h in ipHistory %}<tr><td>{{ h.ip }}</td><td>{{ h.firstSeenAt|date('Y-m-d H:i') }}</td><td>{{ h.lastSeenAt|date('Y-m-d H:i') }}</td></tr>{% endfor %}</table></section>
-    <section class="panel"><h2>Останні потоки</h2><table><tr><th>Час</th><th>Напрямок</th><th>Джерело</th><th>Призначення</th><th>Обсяг</th></tr>{% for f in flows %}<tr><td>{{ f.receivedAt|date('Y-m-d H:i') }}</td><td>{{ f.direction }}</td><td>{{ f.srcIp }}{% if f.srcPort %}:{{ f.srcPort }}{% endif %}</td><td>{{ f.dstIp }}{% if f.dstPort %}:{{ f.dstPort }}{% endif %}</td><td>{{ (f.bytes / 1048576)|number_format(1) }} МБ</td></tr>{% endfor %}</table></section>
+    <section class="panel"><h2>Історія IP</h2><table><tr><th>IP</th><th>Перше</th><th>Останнє</th></tr>{% for h in ipHistory %}<tr><td>{{ h.ip }}</td><td>{{ h.firstSeenAt|date('Y-m-d H:i') }}</td><td>{{ h.lastSeenAt|date('Y-m-d H:i') }}</td></tr>{% else %}<tr><td colspan="3">Немає даних</td></tr>{% endfor %}</table></section>
+</div>
+<div class="grid two">
+    <section class="panel">
+        <h2>Останні домени</h2>
+        <table>
+            <thead><tr><th>Домени</th><th>Останнє</th><th>Обсяг</th></tr></thead>
+            <tbody>
+            {% for row in recentDomains %}
+                <tr>
+                    <td>{{ row.domain }}</td>
+                    <td>{{ row.lastSeenAt ? row.lastSeenAt|date('Y-m-d H:i') : '-' }}</td>
+                    <td>{{ (row.bytes / 1048576)|number_format(1) }} МБ</td>
+                </tr>
+            {% else %}
+                <tr><td colspan="3">Немає даних</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </section>
+    <section class="panel">
+        <h2>Топ доменів за сьогодні</h2>
+        <table>
+            <thead><tr><th>Домен</th><th>Обсяг</th></tr></thead>
+            <tbody>
+            {% for row in topDomainsToday %}
+                <tr><td>{{ row.domain }}</td><td>{{ (row.bytes / 1048576)|number_format(1) }} МБ</td></tr>
+            {% else %}
+                <tr><td colspan="2">Немає даних</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </section>
+</div>
+<div class="grid two">
+    <section class="panel">
+        <h2>Топ застосунків за сьогодні</h2>
+        <table>
+            <thead><tr><th>Застосунок</th><th>Обсяг</th></tr></thead>
+            <tbody>
+            {% for app, bytes in topAppsToday %}
+                <tr><td>{{ app }}</td><td>{{ (bytes / 1048576)|number_format(1) }} МБ</td></tr>
+            {% else %}
+                <tr><td colspan="2">Немає даних</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </section>
+    <section class="panel">
+        <h2>Остання активність</h2>
+        <table>
+            <thead><tr><th>Час</th><th>Домен / застосунок</th><th>Напрямок</th><th>Обсяг</th></tr></thead>
+            <tbody>
+            {% for row in recentActivity %}
+                <tr>
+                    <td>{{ row.receivedAt ? row.receivedAt|date('Y-m-d H:i') : '-' }}</td>
+                    <td>{{ row.label }}</td>
+                    <td>{{ row.direction }}</td>
+                    <td>{{ (row.bytes / 1048576)|number_format(1) }} МБ</td>
+                </tr>
+            {% else %}
+                <tr><td colspan="4">Немає даних</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </section>
 </div>
 {% endblock %}
 {% block scripts %}

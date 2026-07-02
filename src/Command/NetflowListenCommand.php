@@ -4,6 +4,7 @@ namespace App\Command;
 
 use App\NetFlow\NetFlowV9Parser;
 use App\NetFlow\ParsedFlow;
+use App\Service\NetworkFlowEnricher;
 use Doctrine\DBAL\Connection;
 use Throwable;
 use Symfony\Component\Console\Attribute\AsCommand;
@@ -26,6 +27,7 @@ class NetflowListenCommand extends Command
     public function __construct(
         private readonly NetFlowV9Parser $parser,
         private readonly Connection $connection,
+        private readonly NetworkFlowEnricher $networkFlowEnricher,
         string $localSubnets,
     ) {
         $this->localNetworks = $this->parseLocalSubnets($localSubnets);
@@ -180,6 +182,14 @@ class NetflowListenCommand extends Command
             foreach ($flows as $flow) {
                 $direction = $this->detectDirection($flow);
                 $deviceMatch = $this->matchDevice($flow, $direction);
+                $enrichment = $this->networkFlowEnricher->enrich(
+                    $direction,
+                    $flow->srcIPv4,
+                    $flow->dstIPv4,
+                    $flow->protocol,
+                    $flow->srcPort,
+                    $flow->dstPort,
+                );
 
                 $this->connection->insert('network_flow', [
                     'exporter_ip' => $flow->exporterIp,
@@ -198,6 +208,10 @@ class NetflowListenCommand extends Command
                     'device_id' => $deviceMatch['device_id'],
                     'client_id' => $deviceMatch['client_id'],
                     'direction' => $direction,
+                    'domain' => $enrichment['domain'],
+                    'app_name' => $enrichment['app_name'],
+                    'organization' => $enrichment['organization'],
+                    'domain_source' => $enrichment['domain_source'],
                 ]);
                 $saved++;
             }

@@ -13,6 +13,8 @@ use Doctrine\ORM\Mapping as ORM;
 #[ORM\Index(columns: ['src_ip'], name: 'idx_network_flow_src_ip')]
 #[ORM\Index(columns: ['dst_ip'], name: 'idx_network_flow_dst_ip')]
 #[ORM\Index(columns: ['direction'], name: 'idx_network_flow_direction')]
+#[ORM\Index(columns: ['domain'], name: 'idx_network_flow_domain')]
+#[ORM\Index(columns: ['app_name'], name: 'idx_network_flow_app_name')]
 class NetworkFlow
 {
     #[ORM\Id]
@@ -70,6 +72,18 @@ class NetworkFlow
     #[ORM\Column(length: 16)]
     private string $direction;
 
+    #[ORM\Column(length: 255, nullable: true)]
+    private ?string $domain = null;
+
+    #[ORM\Column(length: 128, nullable: true)]
+    private ?string $appName = null;
+
+    #[ORM\Column(length: 255, nullable: true)]
+    private ?string $organization = null;
+
+    #[ORM\Column(length: 32, nullable: true)]
+    private ?string $domainSource = null;
+
     public function getId(): ?int { return $this->id; }
     public function getExporterIp(): string { return $this->exporterIp; }
     public function setExporterIp(string $exporterIp): self { $this->exporterIp = $exporterIp; return $this; }
@@ -103,4 +117,42 @@ class NetworkFlow
     public function setClient(?Client $client): self { $this->client = $client; return $this; }
     public function getDirection(): string { return $this->direction; }
     public function setDirection(string $direction): self { $this->direction = $direction; return $this; }
+    public function getDomain(): ?string { return $this->domain; }
+    public function setDomain(?string $domain): self
+    {
+        if ($domain === null) {
+            $this->domain = null;
+            return $this;
+        }
+
+        $domain = strtolower(trim($domain));
+        $domain = rtrim($domain, '.');
+        $this->domain = $domain === '' ? null : $domain;
+
+        return $this;
+    }
+    public function getAppName(): ?string { return $this->appName; }
+    public function setAppName(?string $appName): self
+    {
+        $appName = $appName !== null ? trim($appName) : null;
+        $this->appName = $appName === '' ? null : $appName;
+
+        return $this;
+    }
+    public function getOrganization(): ?string { return $this->organization; }
+    public function setOrganization(?string $organization): self
+    {
+        $organization = $organization !== null ? trim($organization) : null;
+        $this->organization = $organization === '' ? null : $organization;
+
+        return $this;
+    }
+    public function getDomainSource(): ?string { return $this->domainSource; }
+    public function setDomainSource(?string $domainSource): self
+    {
+        $domainSource = $domainSource !== null ? trim($domainSource) : null;
+        $this->domainSource = $domainSource === '' ? null : $domainSource;
+
+        return $this;
+    }
 }

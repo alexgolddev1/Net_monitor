@@ -4,7 +4,6 @@ namespace App\Controller;
 
 use App\Entity\Client;
 use App\Entity\Device;
-use App\Service\ApplicationLabelResolver;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\JsonResponse;
@@ -17,7 +16,6 @@ class ApiController extends AbstractController
 {
     public function __construct(
         private readonly EntityManagerInterface $em,
-        private readonly ApplicationLabelResolver $applicationLabelResolver,
     )
     {
     }
@@ -248,29 +246,21 @@ class ApiController extends AbstractController
     {
         $rows = $this->em->getConnection()->fetchAllAssociative(
             'SELECT
-                CASE WHEN direction = :download THEN src_ip ELSE dst_ip END remoteIp,
-                CASE WHEN direction = :download THEN src_port ELSE dst_port END remotePort,
-                protocol,
+                COALESCE(NULLIF(app_name, \'\'), \'Unknown\') appName,
                 COALESCE(SUM(bytes), 0) totalBytes
              FROM network_flow
              WHERE received_at BETWEEN :start AND :end
-             GROUP BY remoteIp, remotePort, protocol
-             ORDER BY totalBytes DESC
+             GROUP BY appName
+             ORDER BY (appName = \'Unknown\') ASC, totalBytes DESC
              LIMIT 10',
-            ['download' => 'download'] + $this->todayRangeParameters()
+            $this->todayRangeParameters()
         );
 
         $apps = [];
         foreach ($rows as $row) {
-            $label = $this->applicationLabelResolver->resolveFromFlow(
-                isset($row['protocol']) ? (int) $row['protocol'] : null,
-                isset($row['remotePort']) ? (int) $row['remotePort'] : null,
-                isset($row['remoteIp']) ? (string) $row['remoteIp'] : null
-            );
+            $label = $this->normalizeAppName(isset($row['appName']) ? (string) $row['appName'] : null);
             $apps[$label] = ($apps[$label] ?? 0) + (int) $row['totalBytes'];
         }
-
-        arsort($apps);
 
         return $apps;
     }
@@ -279,21 +269,24 @@ class ApiController extends AbstractController
     {
         $rows = $this->em->getConnection()->fetchAllAssociative(
             'SELECT
-                CASE WHEN direction = :download THEN src_ip ELSE dst_ip END remoteIp,
+                domain,
                 COALESCE(SUM(bytes), 0) totalBytes
              FROM network_flow
              WHERE received_at BETWEEN :start AND :end
-             GROUP BY remoteIp
-             HAVING remoteIp IS NOT NULL
+             GROUP BY domain
+             HAVING domain IS NOT NULL AND LOWER(domain) <> \'unknown\'
              ORDER BY totalBytes DESC
              LIMIT 10',
-            ['download' => 'download'] + $this->todayRangeParameters()
+            $this->todayRangeParameters()
         );
 
         $destinations = [];
         foreach ($rows as $row) {
-            $label = $this->applicationLabelResolver->domainForIp(isset($row['remoteIp']) ? (string) $row['remoteIp'] : null) ?? 'Unknown';
-            $destinations[$label] = ($destinations[$label] ?? 0) + (int) $row['totalBytes'];
+            $domain = isset($row['domain']) ? trim((string) $row['domain']) : '';
+            if ($domain === '' || strcasecmp($domain, 'unknown') === 0) {
+                continue;
+            }
+            $destinations[$domain] = ($destinations[$domain] ?? 0) + (int) $row['totalBytes'];
         }
 
         arsort($destinations);
@@ -323,8 +316,16 @@ class ApiController extends AbstractController
         $from = new \DateTimeImmutable(sprintf('-%d days', $days - 1));
 
         return (int) $this->em->createQuery('SELECT COALESCE(SUM(u.totalBytes), 0) FROM App\Entity\DeviceDailyUsage u WHERE u.device = :device AND u.date >= :from')
-            ->setParameters(['device' => $device, 'from' => $from])
+            ->setParameter('device', $device)
+            ->setParameter('from', $from)
             ->getSingleScalarResult();
+    }
+
+    private function normalizeAppName(?string $appName): string
+    {
+        $appName = $appName !== null ? trim($appName) : '';
+
+        return $appName === '' || is_numeric($appName) ? 'Unknown' : $appName;
     }
 
     private function todayRangeParameters(): array

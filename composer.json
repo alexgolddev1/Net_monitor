@@ -1,6 +1,6 @@
 {
   "name": "local/network-monitor",
-  "description": "Symfony MVP for MikroTik and ntopng network device monitoring.",
+  "description": "Symfony MVP for MikroTik DHCP, DNS cache, and NetFlow monitoring.",
   "type": "project",
   "license": "proprietary",
   "minimum-stability": "stable",

@@ -67,7 +67,7 @@ class TrafficAggregator
         $from = new \DateTimeImmutable(sprintf('-%d days', $days - 1));
         return (int) $this->em->createQuery(
             'SELECT COALESCE(SUM(u.totalBytes), 0) FROM App\Entity\DeviceDailyUsage u WHERE u.device = :device AND u.date >= :from'
-        )->setParameters(['device' => $device, 'from' => $from])->getSingleScalarResult();
+        )->setParameter('device', $device)->setParameter('from', $from)->getSingleScalarResult();
     }
 
     public function trafficTodayFromFlows(): int
@@ -159,17 +159,14 @@ class TrafficAggregator
     {
         $rows = $this->connection->fetchAllAssociative(
             'SELECT
-                CASE WHEN direction = :download THEN src_ip ELSE dst_ip END remoteIp,
-                CASE WHEN direction = :download THEN src_port ELSE dst_port END remotePort,
-                protocol,
+                COALESCE(NULLIF(app_name, \'\'), \'Unknown\') appName,
                 COALESCE(SUM(bytes), 0) bytes
              FROM network_flow
              WHERE device_id = :deviceId AND received_at BETWEEN :start AND :end
-             GROUP BY remoteIp, remotePort, protocol
-             ORDER BY bytes DESC
+             GROUP BY appName
+             ORDER BY (appName = \'Unknown\') ASC, bytes DESC
              LIMIT 10',
             [
-                'download' => 'download',
                 'deviceId' => $device->getId(),
                 'start' => $start->format('Y-m-d H:i:s'),
                 'end' => $end->format('Y-m-d H:i:s'),
@@ -178,15 +175,9 @@ class TrafficAggregator
 
         $totals = [];
         foreach ($rows as $row) {
-            $label = $this->applicationLabelResolver->resolveFromFlow(
-                isset($row['protocol']) ? (int) $row['protocol'] : null,
-                isset($row['remotePort']) ? (int) $row['remotePort'] : null,
-                isset($row['remoteIp']) ? (string) $row['remoteIp'] : null
-            );
+            $label = $this->normalizeAppLabel(isset($row['appName']) ? (string) $row['appName'] : null);
             $totals[$label] = ($totals[$label] ?? 0) + (int) $row['bytes'];
         }
-
-        arsort($totals);
 
         return array_map(
             fn (string $name, int $bytes): array => ['name' => $name, 'bytes' => $bytes],
@@ -198,26 +189,39 @@ class TrafficAggregator
     public function topDestinationsFromFlows(Device $device, \DateTimeImmutable $start, \DateTimeImmutable $end): array
     {
         $rows = $this->connection->fetchAllAssociative(
-            'SELECT CASE WHEN direction = :download THEN src_ip ELSE dst_ip END destination, COALESCE(SUM(bytes), 0) bytes
+            'SELECT COALESCE(NULLIF(domain, \'\'), \'Unknown\') domain, COALESCE(SUM(bytes), 0) bytes
              FROM network_flow
              WHERE device_id = :deviceId AND received_at BETWEEN :start AND :end
-             GROUP BY destination
-             HAVING destination IS NOT NULL
+             GROUP BY domain
+             HAVING domain IS NOT NULL AND LOWER(domain) <> \'unknown\'
              ORDER BY bytes DESC
              LIMIT 10',
             [
-                'download' => 'download',
                 'deviceId' => $device->getId(),
                 'start' => $start->format('Y-m-d H:i:s'),
                 'end' => $end->format('Y-m-d H:i:s'),
             ]
         );
 
-        return array_map(fn (array $row): array => [
-            'name' => $row['destination'],
-            'domain' => $row['destination'],
-            'bytes' => (int) $row['bytes'],
-        ], $rows);
+        return array_values(array_filter(array_map(function (array $row): ?array {
+            $domain = isset($row['domain']) ? trim((string) $row['domain']) : '';
+            if ($domain === '' || strcasecmp($domain, 'unknown') === 0) {
+                return null;
+            }
+
+            return [
+                'name' => $domain,
+                'domain' => $domain,
+                'bytes' => (int) $row['bytes'],
+            ];
+        }, $rows)));
+    }
+
+    private function normalizeAppLabel(?string $label): string
+    {
+        $label = $label !== null ? trim($label) : '';
+
+        return $label === '' || is_numeric($label) ? 'Unknown' : $label;
     }
 
     private function todayParameters(): array

@@ -3,4 +3,4 @@
 /vendor/
 /var/
 /public/bundles/
-/composer.lock
+/.env

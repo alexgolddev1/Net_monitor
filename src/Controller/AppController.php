@@ -53,6 +53,10 @@ class AppController extends AbstractController
             'device' => $device,
             'ipHistory' => $this->em->getRepository(DeviceIpHistory::class)->findBy(['device' => $device], ['lastSeenAt' => 'DESC'], 20),
             'flows' => $this->em->getRepository(NetworkFlow::class)->findBy(['device' => $device], ['receivedAt' => 'DESC'], 20),
+            'recentDomains' => $this->recentDomainsForDevice($device),
+            'topDomainsToday' => $this->topDomainsForDevice($device, 10),
+            'topAppsToday' => $this->topAppsForDevice($device, 10),
+            'recentActivity' => $this->recentActivityForDevice($device, 20),
             'todayBytes' => $aggregator->totalsForDevice($device, 1),
             'monthBytes' => $aggregator->totalsForDevice($device, 30),
             'daily' => $this->dailyUsage($device, 30),
@@ -95,6 +99,10 @@ class AppController extends AbstractController
             'devices' => $client->getDevices(),
             'daily' => $this->clientDailyUsage($client, 30),
             'flows' => $this->clientFlows($client, 30),
+            'recentDomains' => $this->recentDomainsForClient($client),
+            'topDomainsToday' => $this->topDomainsForClient($client, 10),
+            'topAppsToday' => $this->topAppsForClient($client, 10),
+            'recentActivity' => $this->recentActivityForClient($client, 20),
         ]);
     }
 
@@ -190,29 +198,21 @@ class AppController extends AbstractController
     {
         $rows = $this->em->getConnection()->fetchAllAssociative(
             'SELECT
-                CASE WHEN direction = :download THEN src_ip ELSE dst_ip END remoteIp,
-                CASE WHEN direction = :download THEN src_port ELSE dst_port END remotePort,
-                protocol,
+                COALESCE(NULLIF(app_name, \'\'), \'Unknown\') appName,
                 COALESCE(SUM(bytes), 0) totalBytes
              FROM network_flow
              WHERE received_at BETWEEN :start AND :end
-             GROUP BY remoteIp, remotePort, protocol
-             ORDER BY totalBytes DESC
+             GROUP BY appName
+             ORDER BY (appName = \'Unknown\') ASC, totalBytes DESC
              LIMIT 10',
-            ['download' => 'download'] + $this->todayRangeParameters()
+            $this->todayRangeParameters()
         );
 
         $apps = [];
         foreach ($rows as $row) {
-            $label = $this->applicationLabelResolver->resolveFromFlow(
-                isset($row['protocol']) ? (int) $row['protocol'] : null,
-                isset($row['remotePort']) ? (int) $row['remotePort'] : null,
-                isset($row['remoteIp']) ? (string) $row['remoteIp'] : null
-            );
+            $label = $this->normalizeAppName(isset($row['appName']) ? (string) $row['appName'] : null);
             $apps[$label] = ($apps[$label] ?? 0) + (int) $row['totalBytes'];
         }
-
-        arsort($apps);
 
         return $apps;
     }
@@ -221,26 +221,210 @@ class AppController extends AbstractController
     {
         $rows = $this->em->getConnection()->fetchAllAssociative(
             'SELECT
-                CASE WHEN direction = :download THEN src_ip ELSE dst_ip END remoteIp,
+                domain,
                 COALESCE(SUM(bytes), 0) totalBytes
              FROM network_flow
              WHERE received_at BETWEEN :start AND :end
-             GROUP BY remoteIp
-             HAVING remoteIp IS NOT NULL
+             GROUP BY domain
+             HAVING domain IS NOT NULL AND LOWER(domain) <> \'unknown\'
              ORDER BY totalBytes DESC
              LIMIT 10',
-            ['download' => 'download'] + $this->todayRangeParameters()
+            $this->todayRangeParameters()
         );
 
         $destinations = [];
         foreach ($rows as $row) {
-            $label = $this->applicationLabelResolver->domainForIp(isset($row['remoteIp']) ? (string) $row['remoteIp'] : null) ?? 'Unknown';
-            $destinations[$label] = ($destinations[$label] ?? 0) + (int) $row['totalBytes'];
+            $domain = isset($row['domain']) ? trim((string) $row['domain']) : '';
+            if ($domain === '' || strcasecmp($domain, 'unknown') === 0) {
+                continue;
+            }
+            $destinations[$domain] = ($destinations[$domain] ?? 0) + (int) $row['totalBytes'];
         }
 
         arsort($destinations);
 
         return $destinations;
+    }
+
+    private function recentDomainsForDevice(Device $device, int $limit = 20): array
+    {
+        return $this->recentDomains($this->flowDeviceFilter($device), $limit);
+    }
+
+    private function recentDomainsForClient(Client $client, int $limit = 20): array
+    {
+        return $this->recentDomains($this->flowClientFilter($client), $limit);
+    }
+
+    private function topDomainsForDevice(Device $device, int $limit = 10): array
+    {
+        return $this->topDomains($this->flowDeviceFilter($device), $limit);
+    }
+
+    private function topDomainsForClient(Client $client, int $limit = 10): array
+    {
+        return $this->topDomains($this->flowClientFilter($client), $limit);
+    }
+
+    private function topAppsForDevice(Device $device, int $limit = 10): array
+    {
+        return $this->topApps($this->flowDeviceFilter($device), $limit);
+    }
+
+    private function topAppsForClient(Client $client, int $limit = 10): array
+    {
+        return $this->topApps($this->flowClientFilter($client), $limit);
+    }
+
+    private function recentActivityForDevice(Device $device, int $limit = 20): array
+    {
+        return $this->recentActivity($this->flowDeviceFilter($device), $limit);
+    }
+
+    private function recentActivityForClient(Client $client, int $limit = 20): array
+    {
+        return $this->recentActivity($this->flowClientFilter($client), $limit);
+    }
+
+    private function recentDomains(array $filter, int $limit): array
+    {
+        $rows = $this->em->getConnection()->fetchAllAssociative(
+            'SELECT domain, MAX(received_at) lastSeenAt, COALESCE(SUM(bytes), 0) totalBytes
+             FROM network_flow
+             WHERE '.$filter['where'].' AND received_at >= :from AND domain IS NOT NULL AND LOWER(domain) <> \'unknown\'
+             GROUP BY domain
+             ORDER BY lastSeenAt DESC
+             LIMIT '.$limit,
+            $filter['params'] + ['from' => (new \DateTimeImmutable('-30 days'))->format('Y-m-d H:i:s')]
+        );
+
+        return array_values(array_map(fn (array $row): array => [
+            'domain' => (string) $row['domain'],
+            'lastSeenAt' => $row['lastSeenAt'] ?? null,
+            'bytes' => (int) $row['totalBytes'],
+        ], $rows));
+    }
+
+    private function topDomains(array $filter, int $limit): array
+    {
+        $rows = $this->em->getConnection()->fetchAllAssociative(
+            'SELECT domain, COALESCE(SUM(bytes), 0) totalBytes
+             FROM network_flow
+             WHERE '.$filter['where'].' AND received_at BETWEEN :start AND :end AND domain IS NOT NULL AND LOWER(domain) <> \'unknown\'
+             GROUP BY domain
+             ORDER BY totalBytes DESC
+             LIMIT '.$limit,
+            $filter['params'] + $this->todayRangeParameters()
+        );
+
+        return array_values(array_map(fn (array $row): array => [
+            'domain' => (string) $row['domain'],
+            'bytes' => (int) $row['totalBytes'],
+        ], $rows));
+    }
+
+    private function topApps(array $filter, int $limit): array
+    {
+        $rows = $this->em->getConnection()->fetchAllAssociative(
+            'SELECT COALESCE(NULLIF(app_name, \'\'), \'Unknown\') appName, COALESCE(SUM(bytes), 0) totalBytes
+             FROM network_flow
+             WHERE '.$filter['where'].' AND received_at BETWEEN :start AND :end
+             GROUP BY appName
+             ORDER BY (appName = \'Unknown\') ASC, totalBytes DESC
+             LIMIT '.$limit,
+            $filter['params'] + $this->todayRangeParameters()
+        );
+
+        $apps = [];
+        foreach ($rows as $row) {
+            $label = $this->normalizeAppName(isset($row['appName']) ? (string) $row['appName'] : null);
+            $apps[$label] = ($apps[$label] ?? 0) + (int) $row['totalBytes'];
+        }
+
+        return $apps;
+    }
+
+    private function recentActivity(array $filter, int $limit): array
+    {
+        $rows = $this->em->getConnection()->fetchAllAssociative(
+            'SELECT received_at, direction, domain, app_name, bytes, src_ip, dst_ip, src_port, dst_port
+             FROM network_flow
+             WHERE '.$filter['where'].'
+             ORDER BY received_at DESC
+             LIMIT '.$limit,
+            $filter['params']
+        );
+
+        return array_values(array_map(function (array $row): array {
+            $label = $this->normalizeActivityLabel(
+                isset($row['domain']) ? (string) $row['domain'] : null,
+                isset($row['app_name']) ? (string) $row['app_name'] : null
+            );
+
+            return [
+                'receivedAt' => $row['received_at'] ?? null,
+                'direction' => $this->directionLabel((string) ($row['direction'] ?? '')),
+                'label' => $label,
+                'bytes' => (int) ($row['bytes'] ?? 0),
+                'src' => $this->formatFlowEndpoint($row['src_ip'] ?? null, $row['src_port'] ?? null),
+                'dst' => $this->formatFlowEndpoint($row['dst_ip'] ?? null, $row['dst_port'] ?? null),
+            ];
+        }, $rows));
+    }
+
+    private function flowDeviceFilter(Device $device): array
+    {
+        return [
+            'where' => 'device_id = :deviceId',
+            'params' => ['deviceId' => $device->getId()],
+        ];
+    }
+
+    private function flowClientFilter(Client $client): array
+    {
+        return [
+            'where' => 'client_id = :clientId',
+            'params' => ['clientId' => $client->getId()],
+        ];
+    }
+
+    private function normalizeAppName(?string $appName): string
+    {
+        $appName = $appName !== null ? trim($appName) : '';
+
+        return $appName === '' || is_numeric($appName) ? 'Unknown' : $appName;
+    }
+
+    private function normalizeActivityLabel(?string $domain, ?string $appName): string
+    {
+        $domain = $domain !== null ? trim($domain) : '';
+        if ($domain !== '' && strcasecmp($domain, 'unknown') !== 0) {
+            return $domain;
+        }
+
+        return $this->normalizeAppName($appName);
+    }
+
+    private function directionLabel(string $direction): string
+    {
+        return match ($direction) {
+            'upload' => 'Вихідний',
+            'download' => 'Вхідний',
+            'local' => 'Локальний',
+            default => 'Зовнішній',
+        };
+    }
+
+    private function formatFlowEndpoint(mixed $ip, mixed $port): string
+    {
+        $ip = is_string($ip) ? $ip : '';
+        $port = is_numeric($port) ? (int) $port : null;
+
+        if ($ip === '') {
+            return '-';
+        }
+
+        return $port !== null ? sprintf('%s:%d', $ip, $port) : $ip;
     }
 
     private function deviceRows(): array

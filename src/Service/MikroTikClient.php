@@ -2,6 +2,7 @@
 
 namespace App\Service;
 
+use App\Entity\DnsCacheRecord;
 use App\Entity\Device;
 use Doctrine\ORM\EntityManagerInterface;
 use Psr\Log\LoggerInterface;
@@ -56,6 +57,66 @@ class MikroTikClient
         return $count;
     }
 
+    public function syncDnsCache(): int
+    {
+        $rows = $this->mockNetworkData ? $this->mockDnsCache() : $this->fetchDnsCache();
+        $count = 0;
+        $now = new \DateTimeImmutable();
+
+        foreach ($rows as $row) {
+            try {
+                $domain = $row['domain'] ?? null;
+                $recordType = $row['recordType'] ?? null;
+
+                if (!is_string($domain) || $domain === '' || !is_string($recordType) || $recordType === '') {
+                    continue;
+                }
+
+                $criteria = ['domain' => $domain, 'recordType' => strtoupper($recordType)];
+                if (($row['resolvedIp'] ?? null) !== null) {
+                    $criteria['resolvedIp'] = $row['resolvedIp'];
+                }
+                if (($row['cname'] ?? null) !== null) {
+                    $criteria['cname'] = $row['cname'];
+                }
+
+                $record = $this->em->getRepository(DnsCacheRecord::class)->findOneBy($criteria);
+                if (!$record) {
+                    $record = (new DnsCacheRecord())
+                        ->setDomain($domain)
+                        ->setRecordType($recordType)
+                        ->setFirstSeenAt($now)
+                        ->setSource('mikrotik_cache');
+                    $this->em->persist($record);
+                }
+
+                $record
+                    ->setDomain($domain)
+                    ->setRecordType($recordType)
+                    ->setResolvedIp($row['resolvedIp'] ?? null)
+                    ->setCname($row['cname'] ?? null)
+                    ->setTtl($row['ttl'] ?? null)
+                    ->setLastSeenAt($now)
+                    ->setSource('mikrotik_cache');
+
+                if (!$record->getFirstSeenAt()) {
+                    $record->setFirstSeenAt($now);
+                }
+
+                ++$count;
+            } catch (\Throwable $e) {
+                $this->logger->warning('Skipping bad MikroTik DNS cache row', [
+                    'row' => $row,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        $this->em->flush();
+
+        return $count;
+    }
+
     /**
      * Connects to RouterOS API, authenticates, and reads DHCP leases.
      * Errors are logged and swallowed so sync jobs stay non-fatal.
@@ -63,42 +124,7 @@ class MikroTikClient
     private function fetchLeases(): array
     {
         try {
-            $host = trim((string) ($_ENV['MIKROTIK_HOST'] ?? ''));
-            $port = (int) ($_ENV['MIKROTIK_PORT'] ?? 8728);
-            $user = (string) ($_ENV['MIKROTIK_USER'] ?? '');
-            $password = (string) ($_ENV['MIKROTIK_PASSWORD'] ?? '');
-
-            if ($host === '' || $user === '') {
-                $this->logger->warning('MikroTik API credentials are not configured');
-                return [];
-            }
-
-            $socket = @stream_socket_client(
-                sprintf('tcp://%s:%d', $host, $port),
-                $errno,
-                $errstr,
-                5,
-                STREAM_CLIENT_CONNECT
-            );
-            if (!$socket) {
-                $this->logger->warning('MikroTik API connection failed', [
-                    'host' => $host,
-                    'port' => $port,
-                    'error' => $errstr,
-                    'code' => $errno,
-                ]);
-                return [];
-            }
-
-            stream_set_timeout($socket, 5);
-
-            if (!$this->routerOsLogin($socket, $user, $password)) {
-                fclose($socket);
-                return [];
-            }
-
-            $rows = $this->routerOsPrint($socket, '/ip/dhcp-server/lease/print');
-            fclose($socket);
+            $rows = $this->fetchRouterOsRows('/ip/dhcp-server/lease/print');
 
             return array_values(array_filter(array_map(
                 fn (array $row) => $this->normalizeLeaseRow($row),
@@ -106,6 +132,22 @@ class MikroTikClient
             )));
         } catch (\Throwable $e) {
             $this->logger->error('MikroTik sync failed', ['exception' => $e]);
+        }
+
+        return [];
+    }
+
+    private function fetchDnsCache(): array
+    {
+        try {
+            $rows = $this->fetchRouterOsRows('/ip/dns/cache/print');
+
+            return array_values(array_filter(array_map(
+                fn (array $row) => $this->normalizeDnsCacheRow($row),
+                $rows
+            )));
+        } catch (\Throwable $e) {
+            $this->logger->error('MikroTik DNS cache sync failed', ['exception' => $e]);
         }
 
         return [];
@@ -159,6 +201,72 @@ class MikroTikClient
             'comment' => $row['comment'] ?? null,
             'vendor' => null,
         ];
+    }
+
+    private function normalizeDnsCacheRow(array $row): ?array
+    {
+        $domain = $this->normalizeDnsName($row['name'] ?? null);
+        $recordType = strtoupper(trim((string) ($row['type'] ?? '')));
+
+        if ($domain === null || !in_array($recordType, ['A', 'AAAA', 'CNAME'], true)) {
+            return null;
+        }
+
+        $data = $this->normalizeDnsName($row['data'] ?? null);
+
+        return [
+            'domain' => $domain,
+            'recordType' => $recordType,
+            'resolvedIp' => in_array($recordType, ['A', 'AAAA'], true) ? $data : null,
+            'cname' => $recordType === 'CNAME' ? $data : null,
+            'ttl' => $this->parseDnsTtl($row['ttl'] ?? null),
+        ];
+    }
+
+    private function fetchRouterOsRows(string $command): array
+    {
+        $host = trim((string) ($_ENV['MIKROTIK_HOST'] ?? ''));
+        $port = (int) ($_ENV['MIKROTIK_PORT'] ?? 8728);
+        $user = (string) ($_ENV['MIKROTIK_USER'] ?? '');
+        $password = (string) ($_ENV['MIKROTIK_PASSWORD'] ?? '');
+
+        if ($host === '' || $user === '') {
+            $this->logger->warning('MikroTik API credentials are not configured');
+
+            return [];
+        }
+
+        $socket = @stream_socket_client(
+            sprintf('tcp://%s:%d', $host, $port),
+            $errno,
+            $errstr,
+            5,
+            STREAM_CLIENT_CONNECT
+        );
+        if (!$socket) {
+            $this->logger->warning('MikroTik API connection failed', [
+                'host' => $host,
+                'port' => $port,
+                'error' => $errstr,
+                'code' => $errno,
+            ]);
+
+            return [];
+        }
+
+        stream_set_timeout($socket, 5);
+
+        if (!$this->routerOsLogin($socket, $user, $password)) {
+            fclose($socket);
+
+            return [];
+        }
+
+        try {
+            return $this->routerOsPrint($socket, $command);
+        } finally {
+            fclose($socket);
+        }
     }
 
     private function routerOsLogin($socket, string $user, string $password): bool
@@ -395,5 +503,67 @@ class MikroTikClient
             ['mac' => 'AA:30:00:00:00:04', 'ip' => '192.168.30.31', 'hostname' => 'phone-reception', 'vendor' => 'Apple', 'vlan' => '30', 'comment' => 'Reception phone'],
             ['mac' => 'AA:40:00:00:00:05', 'ip' => '192.168.40.41', 'hostname' => 'guest-tablet', 'vendor' => 'Samsung', 'vlan' => '40', 'comment' => 'Guest device'],
         ];
+    }
+
+    private function mockDnsCache(): array
+    {
+        return [
+            ['domain' => 'youtube.com', 'recordType' => 'A', 'resolvedIp' => '142.250.185.238', 'cname' => null, 'ttl' => 300],
+            ['domain' => 'googlevideo.com', 'recordType' => 'A', 'resolvedIp' => '142.250.185.239', 'cname' => null, 'ttl' => 300],
+            ['domain' => 'facebook.com', 'recordType' => 'A', 'resolvedIp' => '157.240.229.35', 'cname' => null, 'ttl' => 300],
+            ['domain' => 'instagram.com', 'recordType' => 'A', 'resolvedIp' => '157.240.229.174', 'cname' => null, 'ttl' => 300],
+            ['domain' => 'office.com', 'recordType' => 'CNAME', 'resolvedIp' => null, 'cname' => 'office.com', 'ttl' => 300],
+        ];
+    }
+
+    private function normalizeDnsName(mixed $value): ?string
+    {
+        if (!is_string($value)) {
+            return null;
+        }
+
+        $value = strtolower(trim($value));
+        $value = rtrim($value, '.');
+
+        return $value === '' ? null : $value;
+    }
+
+    private function parseDnsTtl(mixed $value): ?int
+    {
+        if (is_int($value)) {
+            return $value >= 0 ? $value : null;
+        }
+
+        if (is_string($value)) {
+            $value = trim($value);
+            if ($value === '') {
+                return null;
+            }
+
+            if (ctype_digit($value)) {
+                return (int) $value;
+            }
+
+            if (preg_match_all('/(\d+)([smhdw])/', strtolower($value), $matches, PREG_SET_ORDER) === false) {
+                return null;
+            }
+
+            $seconds = 0;
+            foreach ($matches as $match) {
+                $amount = (int) $match[1];
+                $seconds += match ($match[2]) {
+                    's' => $amount,
+                    'm' => $amount * 60,
+                    'h' => $amount * 3600,
+                    'd' => $amount * 86400,
+                    'w' => $amount * 604800,
+                    default => 0,
+                };
+            }
+
+            return $seconds > 0 ? $seconds : null;
+        }
+
+        return null;
     }
 }

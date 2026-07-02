@@ -1,14 +1,22 @@
 # Network Monitor MVP
 
-Symfony MVP for inventorying network devices by MAC address and viewing client activity from MikroTik DHCP leases and ntopng traffic data. Grafana, billing, captive portal, router-side registration and access control are intentionally out of scope.
+Symfony MVP for network monitoring with:
+
+- MikroTik DHCP API
+- MikroTik DNS cache import
+- NetFlow v9 collector
+- DNS-based domain enrichment
+- MariaDB
+
+The project is intentionally small. It focuses on device inventory, client linkage, traffic enrichment, and dashboard/report views.
 
 ## Stack
 
-- Symfony 6.4, Twig, Doctrine ORM, Migrations
+- Symfony 6.4
+- Doctrine ORM and Migrations
+- Twig
 - MariaDB/MySQL
 - nginx + PHP-FPM
-- ntopng
-- Chart.js
 - Docker Compose
 
 ## Quick Start
@@ -23,51 +31,11 @@ docker compose exec php php bin/console doctrine:fixtures:load --no-interaction
 
 Open:
 
-- Web UI: http://localhost:8080
-- ntopng: http://localhost:3000
+- UI: http://localhost:8080
 
-Default admin credentials from `.env`:
+## Environment
 
-- user: `admin`
-- password: `admin123`
-
-Change `ADMIN_USER`, `ADMIN_PASSWORD`, and `APP_SECRET` before production use.
-
-## Mock Mode
-
-Mock mode is enabled by default:
-
-```dotenv
-MOCK_NETWORK_DATA=true
-```
-
-It provides demo clients, devices, traffic snapshots, apps and domains. The service works without real MikroTik or ntopng data.
-
-Useful commands:
-
-```bash
-docker compose exec php php bin/console app:sync-mikrotik-leases
-docker compose exec php php bin/console app:sync-ntopng-traffic
-docker compose exec php php bin/console app:aggregate-daily-usage
-docker compose exec php php bin/console app:enrich-site-catalog
-docker compose exec php php bin/console app:cleanup-traffic-snapshots
-```
-
-## Scheduler / Cron
-
-Example host crontab:
-
-```cron
-*/2 * * * * cd /path/to/project && docker compose exec -T php php bin/console app:sync-mikrotik-leases
-*/2 * * * * cd /path/to/project && docker compose exec -T php php bin/console app:sync-ntopng-traffic
-0 * * * * cd /path/to/project && docker compose exec -T php php bin/console app:aggregate-daily-usage
-10 * * * * cd /path/to/project && docker compose exec -T php php bin/console app:enrich-site-catalog
-30 2 * * * cd /path/to/project && docker compose exec -T php php bin/console app:cleanup-traffic-snapshots
-```
-
-## MikroTik API
-
-Set in `.env`:
+Set MikroTik values in `.env`:
 
 ```dotenv
 MIKROTIK_HOST=192.168.88.1
@@ -76,73 +44,88 @@ MIKROTIK_USER=api
 MIKROTIK_PASSWORD=secret
 ```
 
-Enable API on MikroTik and create a read-only API user. The MVP has a safe integration boundary: if MikroTik is unavailable, the command logs the error and the UI keeps showing the last saved data. It does not write comments or any other data back to MikroTik.
+`APP_SECRET`, admin credentials, and MikroTik credentials must be overridden for production.
 
-## ntopng
+## Useful Commands
 
-Set in `.env`:
-
-```dotenv
-NTOPNG_URL=http://ntopng:3000
-NTOPNG_USER=admin
-NTOPNG_PASSWORD=admin
+```bash
+docker compose exec php php bin/console app:sync-mikrotik-leases
+docker compose exec php php bin/console app:sync-mikrotik-dns-cache
+docker compose exec php php bin/console app:netflow:listen --host=0.0.0.0 --port=2055
+docker compose exec php php bin/console app:enrich-network-flows --limit=20000
+docker compose exec php php bin/console app:aggregate-flows
+docker compose exec php php bin/console app:cleanup-flows --days=90
 ```
 
-If ntopng is unavailable, sync errors are logged and the UI keeps showing stored snapshots and aggregates.
+## Scheduler / Cron
 
-## MikroTik Traffic Flow / NetFlow
+```cron
+*/2 * * * * cd /path/to/project && docker compose exec -T php php bin/console app:sync-mikrotik-leases
+*/2 * * * * cd /path/to/project && docker compose exec -T php php bin/console app:sync-mikrotik-dns-cache
+*/5 * * * * cd /path/to/project && docker compose exec -T php php bin/console app:enrich-network-flows --limit=20000
+*/1 * * * * cd /path/to/project && docker compose exec -T php php bin/console app:netflow:listen --host=0.0.0.0 --port=2055
+0 * * * * cd /path/to/project && docker compose exec -T php php bin/console app:aggregate-flows
+30 2 * * * cd /path/to/project && docker compose exec -T php php bin/console app:cleanup-flows --days=90
+```
 
-Configure MikroTik to export traffic flow to the server running ntopng:
+## MikroTik Setup
+
+DHCP leases are synchronized via MikroTik RouterOS API.
+
+DNS cache is imported from MikroTik and used for approximate domain attribution.
+
+NetFlow v9 export should target the host running the `netflow-worker` container:
 
 ```routeros
 /ip traffic-flow set enabled=yes interfaces=all
 /ip traffic-flow target add dst-address=<SERVER_IP> port=2055 version=9
 ```
 
-The Compose file exposes UDP `2055` for NetFlow and ntopng Web UI on port `3000`.
+DNS matching is approximate:
+
+- MikroTik DNS cache does not know which client requested a domain
+- `network_flow.domain` is matched by `resolved_ip = external_ip`
+- This is not 100% accurate and not DPI
 
 ## Web UI
 
 Routes:
 
+- `/`
 - `/dashboard`
-- `/clients`
-- `/clients/{id}`
 - `/devices`
 - `/devices/{id}`
+- `/clients`
+- `/clients/{id}`
 - `/reports`
 
-Features:
+Dashboard and detail pages show:
 
-- View devices by MAC, IP, hostname, vendor, VLAN and activity
-- Link a MAC/device to an existing or new client
-- Client detail pages with devices, snapshots and charts
-- Device detail pages with IP history, snapshots and 30-day usage chart
-- Top apps and domains with favicon URLs
-- Daily and monthly reports with CSV export
+- total devices
+- total clients
+- traffic today
+- top devices
+- top clients
+- top domains
+- top apps
+- recent flows/activity
 
-## API
+## Diagnostics
 
-- `GET /api/dashboard`
-- `GET /api/clients`
-- `GET /api/clients/{id}`
-- `GET /api/devices`
-- `GET /api/devices/{id}`
-- `POST /api/devices/{id}/link-client`
-- `GET /api/reports/daily`
-- `GET /api/reports/monthly`
-
-Example link request:
-
-```bash
-curl -X POST http://localhost:8080/api/devices/1/link-client \
-  -H 'Content-Type: application/json' \
-  -d '{"fullName":"Ivan Petrenko","roomNumber":"203","phone":"+380501112233"}'
+```sql
+SELECT COUNT(*) FROM device;
+SELECT COUNT(*) FROM client;
+SELECT COUNT(*) FROM network_flow;
+SELECT COUNT(*) FROM dns_cache_record;
+SELECT COUNT(*) FROM network_flow WHERE domain IS NOT NULL;
+SELECT COUNT(*) FROM network_flow WHERE app_name IS NOT NULL;
+SELECT app_name, SUM(bytes) FROM network_flow GROUP BY app_name ORDER BY SUM(bytes) DESC LIMIT 10;
+SELECT domain, SUM(bytes) FROM network_flow WHERE domain IS NOT NULL GROUP BY domain ORDER BY SUM(bytes) DESC LIMIT 10;
+SELECT direction, COUNT(*), SUM(bytes) FROM network_flow GROUP BY direction;
 ```
 
 ## Notes
 
-- Primary device identifier is MAC address.
-- Passwords and integration credentials are read only from environment variables.
-- Traffic snapshots are intentionally short-lived and can be cleaned by `app:cleanup-traffic-snapshots`.
-- Daily aggregates are stored in `device_daily_usage` for fast dashboard and report queries.
+- `network_flow` enrichment is intentionally approximate.
+- Passwords and secrets must be provided via environment variables.
+- `app:cleanup-flows` removes old `network_flow` rows.
