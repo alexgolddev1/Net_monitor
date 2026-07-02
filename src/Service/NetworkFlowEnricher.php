@@ -29,15 +29,15 @@ class NetworkFlowEnricher
         ?string $currentDomain = null,
         ?string $currentDomainSource = null,
     ): array {
-        $externalIp = $this->externalIp($direction, $srcIp, $dstIp);
         $domain = null;
         $domainSource = null;
 
-        if ($externalIp !== null) {
+        foreach ($this->externalIpCandidates($direction, $srcIp, $dstIp) as $externalIp) {
             $record = $this->resolveDnsCacheRecord($externalIp);
             if ($record !== null) {
                 $domain = $record->getDomain();
                 $domainSource = 'dns_cache';
+                break;
             }
         }
 
@@ -80,13 +80,16 @@ class NetworkFlowEnricher
         return null;
     }
 
-    private function externalIp(string $direction, ?string $srcIp, ?string $dstIp): ?string
+    /**
+     * @return list<string>
+     */
+    private function externalIpCandidates(string $direction, ?string $srcIp, ?string $dstIp): array
     {
         return match ($direction) {
-            'upload' => $dstIp,
-            'download' => $srcIp,
-            'local' => null,
-            default => null,
+            'upload' => array_values(array_filter([$dstIp])),
+            'download' => array_values(array_filter([$srcIp])),
+            'local' => [],
+            default => array_values(array_filter([$srcIp, $dstIp])),
         };
     }
 

@@ -295,7 +295,8 @@ class AppController extends AbstractController
              FROM network_flow
              WHERE received_at BETWEEN :start AND :end
                AND domain IS NOT NULL
-               AND LOWER(domain) <> \'unknown\'
+               AND TRIM(domain) <> \'\'
+               AND LOWER(TRIM(domain)) <> \'unknown\'
              GROUP BY domain
              ORDER BY totalBytes DESC
              LIMIT 10',
@@ -361,7 +362,8 @@ class AppController extends AbstractController
         $rows = $this->em->getConnection()->fetchAllAssociative(
             'SELECT domain, MAX(received_at) lastSeenAt, COALESCE(SUM(bytes), 0) totalBytes
              FROM network_flow
-             WHERE '.$filter['where'].' AND received_at >= :from AND domain IS NOT NULL AND LOWER(domain) <> \'unknown\'
+             WHERE '.$filter['where'].' AND received_at >= :from AND domain IS NOT NULL AND TRIM(domain) <> \'\'
+               AND LOWER(TRIM(domain)) <> \'unknown\'
              GROUP BY domain
              ORDER BY lastSeenAt DESC
              LIMIT '.$limit,
@@ -380,7 +382,8 @@ class AppController extends AbstractController
         $rows = $this->em->getConnection()->fetchAllAssociative(
             'SELECT domain, COALESCE(SUM(bytes), 0) totalBytes
              FROM network_flow
-             WHERE '.$filter['where'].' AND received_at BETWEEN :start AND :end AND domain IS NOT NULL AND LOWER(domain) <> \'unknown\'
+             WHERE '.$filter['where'].' AND received_at BETWEEN :start AND :end AND domain IS NOT NULL AND TRIM(domain) <> \'\'
+               AND LOWER(TRIM(domain)) <> \'unknown\'
              GROUP BY domain
              ORDER BY totalBytes DESC
              LIMIT '.$limit,

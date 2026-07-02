@@ -211,7 +211,8 @@ class TrafficAggregator
              WHERE device_id = :deviceId
                AND received_at BETWEEN :start AND :end
                AND domain IS NOT NULL
-               AND LOWER(domain) <> \'unknown\'
+               AND TRIM(domain) <> \'\'
+               AND LOWER(TRIM(domain)) <> \'unknown\'
              GROUP BY domain
              ORDER BY bytes DESC
              LIMIT 10',

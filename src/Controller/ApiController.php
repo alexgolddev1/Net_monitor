@@ -286,7 +286,8 @@ class ApiController extends AbstractController
              FROM network_flow
              WHERE received_at BETWEEN :start AND :end
                AND domain IS NOT NULL
-               AND LOWER(domain) <> \'unknown\'
+               AND TRIM(domain) <> \'\'
+               AND LOWER(TRIM(domain)) <> \'unknown\'
              GROUP BY domain
              ORDER BY totalBytes DESC
              LIMIT 10',
