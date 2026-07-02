@@ -305,18 +305,18 @@ class MikroTikClient
                 break;
             }
 
-            $type = $sentence[0] ?? null;
-            if ($type === '!re') {
+            $replyType = $sentence[0] ?? null;
+            if ($replyType === '!re') {
                 $rows[] = $this->parseRouterOsSentence($sentence);
                 continue;
             }
 
-            if ($type === '!trap' || $type === '!fatal') {
+            if ($replyType === '!trap' || $replyType === '!fatal') {
                 $this->logger->warning('MikroTik API command failed', ['command' => $command, 'reply' => $this->parseRouterOsSentence($sentence)]);
                 return [];
             }
 
-            if ($type === '!done') {
+            if ($replyType === '!done') {
                 break;
             }
         }
@@ -326,7 +326,7 @@ class MikroTikClient
 
     private function isDone(array $reply): bool
     {
-        return ($reply['type'] ?? null) === '!done';
+        return ($reply['_replyType'] ?? null) === '!done';
     }
 
     private function readResponse($socket): array
@@ -337,8 +337,8 @@ class MikroTikClient
                 return [];
             }
 
-            $type = $sentence[0] ?? null;
-            if ($type === '!re') {
+            $replyType = $sentence[0] ?? null;
+            if ($replyType === '!re') {
                 continue;
             }
 
@@ -488,7 +488,7 @@ class MikroTikClient
         }
 
         if (isset($sentence[0])) {
-            $result['type'] = $sentence[0];
+            $result['_replyType'] = $sentence[0];
         }
 
         return $result;
