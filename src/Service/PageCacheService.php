@@ -30,31 +30,24 @@ class PageCacheService
 
     public function cachedClientRows(): array
     {
-        return $this->ensureCache(
-            'clients',
-            fn (): array => $this->refreshClients(),
-            fn (array $rows): bool => $rows === [] || (isset($rows[0]['lastSeen']) && isset($rows[0]['deviceCount']))
-        );
+        $rows = $this->readCache('clients');
+        if ($rows !== null) {
+            return $rows;
+        }
+
+        return $this->emptyClientRows();
     }
 
     public function cachedDeviceDetail(int $deviceId): array
     {
-        $details = $this->ensureCache(
-            'device_details',
-            fn (): array => $this->refreshDevices(),
-            fn (array $details): bool => !$this->detailCacheUsesLegacyTimestamps($details)
-        );
+        $details = $this->readCache('device_details') ?? [];
 
         return $details[$deviceId] ?? $this->emptyDetailPayload();
     }
 
     public function cachedClientDetail(int $clientId): array
     {
-        $details = $this->ensureCache(
-            'client_details',
-            fn (): array => $this->refreshClients(),
-            fn (array $details): bool => !$this->detailCacheUsesLegacyTimestamps($details)
-        );
+        $details = $this->readCache('client_details') ?? [];
 
         return $details[$clientId] ?? $this->emptyDetailPayload();
     }
@@ -678,28 +671,6 @@ class PageCacheService
         } catch (\Exception) {
             return $value;
         }
-    }
-
-    private function detailCacheUsesLegacyTimestamps(array $details): bool
-    {
-        foreach ($details as $detail) {
-            if (!is_array($detail)) {
-                continue;
-            }
-
-            foreach (['recentDomains', 'recentActivity'] as $section) {
-                foreach ($detail[$section] ?? [] as $row) {
-                    foreach (['receivedAt', 'lastSeenAt'] as $field) {
-                        $value = $row[$field] ?? null;
-                        if (is_string($value) && preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $value) === 1) {
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-
-        return false;
     }
 
     private function trafficRangeParameters(int $days): array
