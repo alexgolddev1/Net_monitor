@@ -29,13 +29,15 @@ class EnrichNetworkFlowsCommand extends Command
     {
         $this
             ->addOption('limit', null, InputOption::VALUE_REQUIRED, 'Maximum number of flows to enrich.', 10000)
-            ->addOption('batch-size', null, InputOption::VALUE_REQUIRED, 'Rows to process per batch.', 500);
+            ->addOption('batch-size', null, InputOption::VALUE_REQUIRED, 'Rows to process per batch.', 500)
+            ->addOption('refresh-domains', null, InputOption::VALUE_NONE, 'Recheck DNS cache domains for already enriched flows.');
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $limit = max(1, (int) $input->getOption('limit'));
         $batchSize = max(1, min($limit, (int) $input->getOption('batch-size')));
+        $refreshDomains = (bool) $input->getOption('refresh-domains');
 
         $processed = 0;
         $enriched = 0;
@@ -45,7 +47,7 @@ class EnrichNetworkFlowsCommand extends Command
 
         while ($processed < $limit) {
             $currentBatchSize = min($batchSize, $limit - $processed);
-            $rows = $this->fetchFlowBatch($currentBatchSize, $lastId);
+            $rows = $this->fetchFlowBatch($currentBatchSize, $lastId, $refreshDomains);
             if ($rows === []) {
                 break;
             }
@@ -57,7 +59,8 @@ class EnrichNetworkFlowsCommand extends Command
             $this->connection->transactional(function () use ($rows, $dnsByIp, &$enriched, &$domainsFound): void {
                 foreach ($rows as $row) {
                     $domainWasMissing = empty($row['domain']);
-                    $domain = $this->domainForFlow($row, $dnsByIp);
+                    $domainFromDns = $this->domainForFlow($row, $dnsByIp);
+                    $domain = $domainFromDns;
 
                     if ($domain === null) {
                         $domain = $this->normalizeDomain(isset($row['domain']) ? (string) $row['domain'] : null);
@@ -83,7 +86,9 @@ class EnrichNetworkFlowsCommand extends Command
                         $update['domain'] = $domain;
                     }
 
-                    if ($domain !== null && $domainWasMissing) {
+                    if ($domainFromDns !== null) {
+                        $update['domain_source'] = 'dns_cache';
+                    } elseif ($domain !== null && $domainWasMissing) {
                         $update['domain_source'] = 'dns_cache';
                     } elseif ($domainWasMissing) {
                         $update['domain_source'] = null;
@@ -121,9 +126,12 @@ class EnrichNetworkFlowsCommand extends Command
     /**
      * @return list<array<string, mixed>>
      */
-    private function fetchFlowBatch(int $limit, ?int $lastId): array
+    private function fetchFlowBatch(int $limit, ?int $lastId, bool $refreshDomains): array
     {
         $where = '(domain IS NULL OR domain = \'\' OR app_name IS NULL OR app_name = \'\')';
+        if ($refreshDomains) {
+            $where = '('.$where.' OR domain_source = \'dns_cache\')';
+        }
         $params = [];
 
         if ($lastId !== null) {
@@ -161,10 +169,17 @@ class EnrichNetworkFlowsCommand extends Command
         }
 
         $dnsRows = $this->connection->fetchAllAssociative(
-            'SELECT resolved_ip, domain
-             FROM dns_cache_record
-             WHERE resolved_ip IN (:ips)
-             ORDER BY last_seen_at DESC, id DESC',
+            'SELECT
+                a.resolved_ip,
+                COALESCE(c.domain, a.domain) domain,
+                CASE WHEN c.domain IS NULL THEN 0 ELSE 1 END aliasPriority,
+                COALESCE(c.last_seen_at, a.last_seen_at) domainLastSeenAt,
+                COALESCE(c.id, a.id) domainId
+             FROM dns_cache_record a
+             LEFT JOIN dns_cache_record c ON c.cname = a.domain AND c.record_type = \'CNAME\'
+             WHERE a.resolved_ip IN (:ips)
+               AND a.record_type IN (\'A\', \'AAAA\')
+             ORDER BY aliasPriority DESC, domainLastSeenAt DESC, domainId DESC',
             ['ips' => array_values($candidateIps)],
             ['ips' => ArrayParameterType::STRING]
         );

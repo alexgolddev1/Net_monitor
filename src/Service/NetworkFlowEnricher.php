@@ -84,13 +84,25 @@ class NetworkFlowEnricher
             ->getOneOrNullResult();
 
         if ($record instanceof DnsCacheRecord) {
-            $this->dnsCacheByIp[$externalIp] = $record;
-            return $record;
+            $preferredRecord = $this->preferredDnsCacheRecord($record);
+            $this->dnsCacheByIp[$externalIp] = $preferredRecord;
+
+            return $preferredRecord;
         }
 
         $this->dnsCacheByIp[$externalIp] = null;
 
         return null;
+    }
+
+    private function preferredDnsCacheRecord(DnsCacheRecord $record): DnsCacheRecord
+    {
+        $alias = $this->em->getRepository(DnsCacheRecord::class)->findOneBy(
+            ['cname' => $record->getDomain()],
+            ['lastSeenAt' => 'DESC', 'id' => 'DESC']
+        );
+
+        return $alias instanceof DnsCacheRecord ? $alias : $record;
     }
 
     /**
