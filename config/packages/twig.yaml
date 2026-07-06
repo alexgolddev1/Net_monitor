@@ -3,3 +3,4 @@ twig:
   form_themes: ['bootstrap_5_layout.html.twig']
   globals:
     app_name: 'Моніторинг мережі'
+    page_cache: '@App\Service\PageCacheService'

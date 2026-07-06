@@ -17,6 +17,10 @@
         .nav a:hover { background:#1f2937; color:#fff; }
         .content { padding:24px; min-width:0; }
         .topbar { display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; gap:16px; }
+        .topbar-actions { display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:flex-end; }
+        .topbar-actions form { margin:0; }
+        .cache-actions { display:grid; gap:4px; justify-items:start; }
+        .cache-meta { font-size:12px; color:var(--muted); line-height:1.2; }
         h1 { font-size:26px; margin:0; }
         h2 { font-size:18px; margin:0 0 12px; }
         .grid { display:grid; gap:16px; }
@@ -54,7 +58,37 @@
     <main class="content">
         <div class="topbar">
             <h1>{% block heading %}{{ app_name }}{% endblock %}</h1>
-            <span class="muted">MikroTik + моніторинг трафіку</span>
+            <div class="topbar-actions">
+                <span class="muted">MikroTik + моніторинг трафіку</span>
+                <div class="cache-actions">
+                    <form method="post" action="{{ path('clients_refresh') }}">
+                        <input type="hidden" name="_csrf_token" value="{{ csrf_token('clients_refresh') }}">
+                        <button type="submit" class="btn secondary">Оновити клієнтів</button>
+                    </form>
+                    <div class="cache-meta">
+                        Оновлено:
+                        {% if page_cache.clientsCacheUpdatedAt() %}
+                            {{ page_cache.clientsCacheUpdatedAt()|date('Y-m-d H:i') }}
+                        {% else %}
+                            ще не оновлено
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="cache-actions">
+                    <form method="post" action="{{ path('devices_refresh') }}">
+                        <input type="hidden" name="_csrf_token" value="{{ csrf_token('devices_refresh') }}">
+                        <button type="submit" class="btn secondary">Оновити пристрої</button>
+                    </form>
+                    <div class="cache-meta">
+                        Оновлено:
+                        {% if page_cache.devicesCacheUpdatedAt() %}
+                            {{ page_cache.devicesCacheUpdatedAt()|date('Y-m-d H:i') }}
+                        {% else %}
+                            ще не оновлено
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
         </div>
         {% for message in app.flashes('success') %}
             <div class="flash">{{ message }}</div>

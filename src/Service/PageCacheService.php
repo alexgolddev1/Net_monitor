@@ -50,19 +50,57 @@ class PageCacheService
     public function refresh(): array
     {
         $deviceRows = $this->buildDeviceRows();
-        $clientRows = $this->buildClientRows($deviceRows);
         $deviceDetails = $this->buildDeviceDetails($deviceRows);
+        $clientRows = $this->buildClientRows($deviceRows);
         $clientDetails = $this->buildClientDetails($clientRows, $deviceRows, $deviceDetails);
 
         $this->writeCache('devices', $deviceRows);
-        $this->writeCache('clients', $clientRows);
         $this->writeCache('device_details', $deviceDetails);
+        $this->writeCache('clients', $clientRows);
         $this->writeCache('client_details', $clientDetails);
 
         return [
             'devices' => count($deviceRows),
             'clients' => count($clientRows),
         ];
+    }
+
+    public function refreshDevices(): array
+    {
+        $deviceRows = $this->buildDeviceRows();
+        $deviceDetails = $this->buildDeviceDetails($deviceRows);
+
+        $this->writeCache('devices', $deviceRows);
+        $this->writeCache('device_details', $deviceDetails);
+
+        return [
+            'devices' => count($deviceRows),
+        ];
+    }
+
+    public function refreshClients(): array
+    {
+        $deviceRows = $this->readCache('devices') ?? $this->buildDeviceRows();
+        $deviceDetails = $this->readCache('device_details') ?? $this->buildDeviceDetails($deviceRows);
+        $clientRows = $this->buildClientRows($deviceRows);
+        $clientDetails = $this->buildClientDetails($clientRows, $deviceRows, $deviceDetails);
+
+        $this->writeCache('clients', $clientRows);
+        $this->writeCache('client_details', $clientDetails);
+
+        return [
+            'clients' => count($clientRows),
+        ];
+    }
+
+    public function devicesCacheUpdatedAt(): ?\DateTimeImmutable
+    {
+        return $this->cacheUpdatedAt('devices');
+    }
+
+    public function clientsCacheUpdatedAt(): ?\DateTimeImmutable
+    {
+        return $this->cacheUpdatedAt('clients');
     }
 
     private function buildDeviceRows(): array
@@ -672,5 +710,15 @@ class PageCacheService
     private function cachePath(string $name): string
     {
         return $this->kernel->getProjectDir().'/var/cache/page_'.$name.'.json';
+    }
+
+    private function cacheUpdatedAt(string $name): ?\DateTimeImmutable
+    {
+        $modifiedAt = @filemtime($this->cachePath($name));
+        if ($modifiedAt === false) {
+            return null;
+        }
+
+        return (new \DateTimeImmutable())->setTimestamp($modifiedAt);
     }
 }

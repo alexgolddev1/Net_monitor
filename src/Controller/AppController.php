@@ -91,6 +91,38 @@ class AppController extends AbstractController
         return $this->render('clients/index.html.twig', ['clients' => $this->pageCache->cachedClientRows()]);
     }
 
+    #[Route('/clients/refresh', name: 'clients_refresh', methods: ['POST'])]
+    public function refreshClients(Request $request): Response
+    {
+        if (!$this->isCsrfTokenValid('clients_refresh', (string) $request->request->get('_csrf_token'))) {
+            throw $this->createAccessDeniedException('Invalid CSRF token.');
+        }
+
+        $counts = $this->pageCache->refreshClients();
+        $this->addFlash('success', sprintf(
+            'Clients refreshed. Clients: %d.',
+            $counts['clients']
+        ));
+
+        return $this->redirect($request->headers->get('referer') ?: $this->generateUrl('clients'));
+    }
+
+    #[Route('/devices/refresh', name: 'devices_refresh', methods: ['POST'])]
+    public function refreshDevices(Request $request): Response
+    {
+        if (!$this->isCsrfTokenValid('devices_refresh', (string) $request->request->get('_csrf_token'))) {
+            throw $this->createAccessDeniedException('Invalid CSRF token.');
+        }
+
+        $counts = $this->pageCache->refreshDevices();
+        $this->addFlash('success', sprintf(
+            'Devices refreshed. Devices: %d.',
+            $counts['devices'],
+        ));
+
+        return $this->redirect($request->headers->get('referer') ?: $this->generateUrl('devices'));
+    }
+
     #[Route('/clients', name: 'client_create', methods: ['POST'])]
     public function createClient(Request $request): Response
     {
