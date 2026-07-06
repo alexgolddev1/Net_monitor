@@ -8,7 +8,6 @@ use App\Entity\DeviceDailyUsage;
 use App\Entity\DeviceIpHistory;
 use App\Entity\NetworkFlow;
 use App\Service\ApplicationLabelResolver;
-use App\Service\TrafficAggregator;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\Request;
@@ -47,7 +46,7 @@ class AppController extends AbstractController
     }
 
     #[Route('/devices/{id}', name: 'device_show', requirements: ['id' => '\d+'])]
-    public function device(Device $device, TrafficAggregator $aggregator): Response
+    public function device(Device $device): Response
     {
         return $this->render('devices/show.html.twig', [
             'device' => $device,
@@ -57,8 +56,8 @@ class AppController extends AbstractController
             'topDomainsToday' => $this->topDomainsForDevice($device, 10),
             'topAppsToday' => $this->topAppsForDevice($device, 10),
             'recentActivity' => $this->recentActivityForDevice($device, 20),
-            'todayBytes' => $aggregator->totalsForDevice($device, 1),
-            'monthBytes' => $aggregator->totalsForDevice($device, 30),
+            'todayBytes' => $this->usageTotal($device, 1),
+            'monthBytes' => $this->usageTotal($device, 30),
             'daily' => $this->dailyUsage($device, 30),
         ]);
     }
@@ -550,12 +549,15 @@ class AppController extends AbstractController
     private function deviceRows(): array
     {
         $devices = $this->em->getRepository(Device::class)->findBy([], ['lastSeenAt' => 'DESC']);
+        $todayTotals = $this->usageTotalsByDeviceFromFlows(1);
+        $monthTotals = $this->usageTotalsByDeviceFromFlows(30);
         $rows = [];
         foreach ($devices as $device) {
+            $deviceId = $device->getId();
             $rows[] = [
                 'device' => $device,
-                'today' => $this->usageTotal($device, 1),
-                'month' => $this->usageTotal($device, 30),
+                'today' => $deviceId !== null ? ($todayTotals[$deviceId] ?? 0) : 0,
+                'month' => $deviceId !== null ? ($monthTotals[$deviceId] ?? 0) : 0,
             ];
         }
         usort($rows, fn ($a, $b) => $b['today'] <=> $a['today']);
@@ -585,11 +587,39 @@ class AppController extends AbstractController
 
     private function usageTotal(Device $device, int $days): int
     {
-        $from = new \DateTimeImmutable(sprintf('-%d days', $days - 1));
-        return (int) $this->em->createQuery('SELECT COALESCE(SUM(u.totalBytes), 0) FROM App\Entity\DeviceDailyUsage u WHERE u.device = :device AND u.date >= :from')
-            ->setParameter('device', $device)
-            ->setParameter('from', $from)
-            ->getSingleScalarResult();
+        if ($device->getId() === null) {
+            return 0;
+        }
+
+        return (int) $this->em->getConnection()->fetchOne(
+            'SELECT COALESCE(SUM(bytes), 0)
+             FROM network_flow
+             WHERE device_id = :deviceId
+               AND received_at BETWEEN :start AND :end',
+            ['deviceId' => $device->getId()] + $this->trafficRangeParameters($days)
+        );
+    }
+
+    /**
+     * @return array<int, int>
+     */
+    private function usageTotalsByDeviceFromFlows(int $days): array
+    {
+        $rows = $this->em->getConnection()->fetchAllAssociative(
+            'SELECT device_id deviceId, COALESCE(SUM(bytes), 0) totalBytes
+             FROM network_flow
+             WHERE device_id IS NOT NULL
+               AND received_at BETWEEN :start AND :end
+             GROUP BY device_id',
+            $this->trafficRangeParameters($days)
+        );
+
+        $totals = [];
+        foreach ($rows as $row) {
+            $totals[(int) $row['deviceId']] = (int) $row['totalBytes'];
+        }
+
+        return $totals;
     }
 
     private function dailyUsage(Device $device, int $days): array
@@ -706,10 +736,16 @@ class AppController extends AbstractController
 
     private function todayRangeParameters(): array
     {
+        return $this->trafficRangeParameters(1);
+    }
+
+    private function trafficRangeParameters(int $days): array
+    {
         $today = new \DateTimeImmutable('today');
+        $start = $today->modify('-'.max(0, $days - 1).' days')->setTime(0, 0);
 
         return [
-            'start' => $today->setTime(0, 0)->format('Y-m-d H:i:s'),
+            'start' => $start->format('Y-m-d H:i:s'),
             'end' => $today->setTime(23, 59, 59)->format('Y-m-d H:i:s'),
         ];
     }
