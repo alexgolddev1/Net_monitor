@@ -6,7 +6,6 @@ use App\Entity\Client;
 use App\Entity\Device;
 use App\Entity\DeviceDailyUsage;
 use App\Entity\DeviceIpHistory;
-use App\Entity\NetworkFlow;
 use App\Service\ApplicationLabelResolver;
 use App\Service\PageCacheService;
 use Doctrine\ORM\EntityManagerInterface;
@@ -53,17 +52,13 @@ class AppController extends AbstractController
     #[Route('/devices/{id}', name: 'device_show', requirements: ['id' => '\d+'])]
     public function device(Device $device): Response
     {
+        $traffic = $this->pageCache->cachedDeviceDetail((int) $device->getId());
+
         return $this->render('devices/show.html.twig', [
             'device' => $device,
             'ipHistory' => $this->em->getRepository(DeviceIpHistory::class)->findBy(['device' => $device], ['lastSeenAt' => 'DESC'], 20),
-            'flows' => $this->em->getRepository(NetworkFlow::class)->findBy(['device' => $device], ['receivedAt' => 'DESC'], 20),
-            'recentDomains' => $this->recentDomainsForDevice($device),
-            'topDomainsToday' => $this->topDomainsForDevice($device, 10),
-            'topAppsToday' => $this->topAppsForDevice($device, 10),
-            'recentActivity' => $this->recentActivityForDevice($device, 20),
-            'todayBytes' => $this->usageTotal($device, 1),
-            'monthBytes' => $this->usageTotal($device, 30),
-            'daily' => $this->dailyUsage($device, 30),
+            'todayBytes' => $traffic['today'] ?? 0,
+            'monthBytes' => $traffic['month'] ?? 0,
         ]);
     }
 
@@ -156,24 +151,20 @@ class AppController extends AbstractController
     #[Route('/clients/{id}', name: 'client_show', requirements: ['id' => '\d+'])]
     public function client(Client $client): Response
     {
-        $deviceRows = $this->clientDeviceRows($client);
-        $today = array_sum(array_column($deviceRows, 'today'));
-        $todayDownload = array_sum(array_column($deviceRows, 'todayDownload'));
-        $todayUpload = array_sum(array_column($deviceRows, 'todayUpload'));
+        $clientId = (int) $client->getId();
+        $traffic = $this->pageCache->cachedClientDetail($clientId);
+        $deviceRows = array_values(array_filter(
+            $this->pageCache->cachedDeviceRows(),
+            fn (array $row): bool => ($row['device']['clientId'] ?? null) === $clientId
+        ));
 
         return $this->render('clients/show.html.twig', [
             'client' => $client,
             'devices' => $client->getDevices(),
             'deviceRows' => $deviceRows,
-            'today' => $today,
-            'todayDownload' => $todayDownload,
-            'todayUpload' => $todayUpload,
-            'daily' => $this->clientDailyUsage($client, 30),
-            'flows' => $this->clientFlows($client, 30),
-            'recentDomains' => $this->recentDomainsForClient($client),
-            'topDomainsToday' => $this->topDomainsForClient($client, 10),
-            'topAppsToday' => $this->topAppsForClient($client, 10),
-            'recentActivity' => $this->recentActivityForClient($client, 20),
+            'today' => $traffic['today'] ?? 0,
+            'todayDownload' => $traffic['todayDownload'] ?? 0,
+            'todayUpload' => $traffic['todayUpload'] ?? 0,
         ]);
     }
 

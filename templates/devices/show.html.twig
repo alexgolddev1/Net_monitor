@@ -17,16 +17,8 @@
         <h2>Останні домени</h2>
         <table>
             <thead><tr><th>Домени</th><th>Останнє</th><th>Обсяг</th></tr></thead>
-            <tbody>
-            {% for row in recentDomains %}
-                <tr>
-                    <td>{{ row.domain }}</td>
-                    <td>{{ row.lastSeenAt ? row.lastSeenAt|date('Y-m-d H:i') : '-' }}</td>
-                    <td>{{ (row.bytes / 1048576)|number_format(1) }} МБ</td>
-                </tr>
-            {% else %}
-                <tr><td colspan="3">Немає даних</td></tr>
-            {% endfor %}
+            <tbody id="recent-domains-body">
+                <tr><td colspan="3" class="muted">Завантаження...</td></tr>
             </tbody>
         </table>
     </section>
@@ -34,12 +26,8 @@
         <h2>Топ доменів за сьогодні</h2>
         <table>
             <thead><tr><th>Домен</th><th>Обсяг</th></tr></thead>
-            <tbody>
-            {% for row in topDomainsToday %}
-                <tr><td>{{ row.domain }}</td><td>{{ (row.bytes / 1048576)|number_format(1) }} МБ</td></tr>
-            {% else %}
-                <tr><td colspan="2">Немає даних</td></tr>
-            {% endfor %}
+            <tbody id="top-domains-body">
+                <tr><td colspan="2" class="muted">Завантаження...</td></tr>
             </tbody>
         </table>
     </section>
@@ -49,12 +37,8 @@
         <h2>Топ застосунків за сьогодні</h2>
         <table>
             <thead><tr><th>Застосунок</th><th>Обсяг</th></tr></thead>
-            <tbody>
-            {% for app, bytes in topAppsToday %}
-                <tr><td>{{ app }}</td><td>{{ (bytes / 1048576)|number_format(1) }} МБ</td></tr>
-            {% else %}
-                <tr><td colspan="2">Немає даних</td></tr>
-            {% endfor %}
+            <tbody id="top-apps-body">
+                <tr><td colspan="2" class="muted">Завантаження...</td></tr>
             </tbody>
         </table>
     </section>
@@ -62,42 +46,23 @@
         <h2>Остання активність</h2>
         <table>
             <thead><tr><th>Час</th><th>Домен / застосунок</th><th>Напрямок</th><th>Обсяг</th></tr></thead>
-            <tbody>
-            {% for row in recentActivity %}
-                <tr>
-                    <td>{{ row.receivedAt ? row.receivedAt|date('Y-m-d H:i') : '-' }}</td>
-                    <td>{{ row.label }}</td>
-                    <td>{{ row.direction }}</td>
-                    <td>{{ (row.bytes / 1048576)|number_format(1) }} МБ</td>
-                </tr>
-            {% else %}
-                <tr><td colspan="4">Немає даних</td></tr>
-            {% endfor %}
+            <tbody id="recent-activity-body">
+                <tr><td colspan="4" class="muted">Завантаження...</td></tr>
             </tbody>
         </table>
     </section>
 </div>
 {% endblock %}
 {% block scripts %}
-{% set usageLabels = [] %}
-{% set usageValues = [] %}
-{% for usage in daily %}
-    {% set usageLabels = usageLabels|merge([usage.date|date('Y-m-d')]) %}
-    {% set usageValues = usageValues|merge([(usage.totalBytes / 1048576)|round(1)]) %}
-{% endfor %}
-<script type="application/json" id="usageChartLabels">{{ usageLabels|json_encode|raw }}</script>
-<script type="application/json" id="usageChartValues">{{ usageValues|json_encode|raw }}</script>
 <script>
 {% verbatim %}
-const usageLabels = JSON.parse(document.getElementById('usageChartLabels').textContent);
-const usageValues = JSON.parse(document.getElementById('usageChartValues').textContent);
-new Chart(document.getElementById('usageChart'), {
+const usageChart = new Chart(document.getElementById('usageChart'), {
   type: 'line',
   data: {
-    labels: usageLabels,
+    labels: [],
     datasets: [{
       label: 'МБ',
-      data: usageValues,
+      data: [],
       borderColor: '#0f766e',
       backgroundColor: 'rgba(15,118,110,.12)',
       fill: true
@@ -105,5 +70,75 @@ new Chart(document.getElementById('usageChart'), {
   }
 });
 {% endverbatim %}
+
+const trafficUrl = {{ path('api_device_traffic', {id: device.id})|json_encode|raw }};
+
+function formatBytes(bytes) {
+  const value = Number(bytes) || 0;
+  if (value >= 1073741824) return `${(value / 1073741824).toFixed(1)} GB`;
+  if (value >= 1048576) return `${(value / 1048576).toFixed(1)} МБ`;
+  if (value >= 1024) return `${Math.round(value / 1024)} КБ`;
+  return `${value} B`;
+}
+
+function renderRows(tbodyId, rows, columns, renderer) {
+  const tbody = document.getElementById(tbodyId);
+  const rendered = rows.map(renderer);
+  if (rendered.length === 0) {
+    const line = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.colSpan = columns;
+    cell.className = 'muted';
+    cell.textContent = 'Немає даних';
+    line.appendChild(cell);
+    tbody.replaceChildren(line);
+    return;
+  }
+  tbody.replaceChildren(...rendered);
+}
+
+function td(text) {
+  const cell = document.createElement('td');
+  cell.textContent = text ?? '-';
+  return cell;
+}
+
+fetch(trafficUrl, { headers: { Accept: 'application/json' } })
+  .then((response) => response.ok ? response.json() : Promise.reject(new Error(`Traffic API ${response.status}`)))
+  .then((data) => {
+    const daily = data.daily || [];
+    usageChart.data.labels = daily.map((row) => row.date);
+    usageChart.data.datasets[0].data = daily.map((row) => Math.round((Number(row.bytes) || 0) / 104857.6) / 10);
+    usageChart.update();
+
+    renderRows('recent-domains-body', data.recentDomains || [], 3, (row) => {
+      const line = document.createElement('tr');
+      line.appendChild(td(row.domain));
+      line.appendChild(td(row.lastSeenAt ? new Date(row.lastSeenAt).toLocaleString() : '-'));
+      line.appendChild(td(formatBytes(row.bytes)));
+      return line;
+    });
+    renderRows('top-domains-body', data.topDomainsToday || [], 2, (row) => {
+      const line = document.createElement('tr');
+      line.appendChild(td(row.domain));
+      line.appendChild(td(formatBytes(row.bytes)));
+      return line;
+    });
+    renderRows('top-apps-body', Object.entries(data.topAppsToday || {}), 2, ([app, bytes]) => {
+      const line = document.createElement('tr');
+      line.appendChild(td(app));
+      line.appendChild(td(formatBytes(bytes)));
+      return line;
+    });
+    renderRows('recent-activity-body', data.recentActivity || [], 4, (row) => {
+      const line = document.createElement('tr');
+      line.appendChild(td(row.receivedAt ? new Date(row.receivedAt).toLocaleString() : '-'));
+      line.appendChild(td(row.label));
+      line.appendChild(td(row.direction));
+      line.appendChild(td(formatBytes(row.bytes)));
+      return line;
+    });
+  })
+  .catch((error) => console.warn('Device traffic load failed', error));
 </script>
 {% endblock %}

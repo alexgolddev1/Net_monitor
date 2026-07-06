@@ -5,10 +5,10 @@ namespace App\Controller;
 use App\Entity\Client;
 use App\Entity\Device;
 use App\Service\DashboardCacheService;
+use App\Service\PageCacheService;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\JsonResponse;
-use Symfony\Component\HttpFoundation\StreamedResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\Routing\Attribute\Route;
 
@@ -18,6 +18,7 @@ class ApiController extends AbstractController
     public function __construct(
         private readonly EntityManagerInterface $em,
         private readonly DashboardCacheService $dashboardCache,
+        private readonly PageCacheService $pageCache,
     )
     {
     }
@@ -26,39 +27,6 @@ class ApiController extends AbstractController
     public function dashboard(): JsonResponse
     {
         return $this->json($this->dashboardCache->cachedPayload());
-    }
-
-    #[Route('/dashboard/stream', methods: ['GET'], name: 'api_dashboard_stream')]
-    public function dashboardStream(): StreamedResponse
-    {
-        $response = new StreamedResponse(function (): void {
-            @ini_set('output_buffering', 'off');
-            @ini_set('zlib.output_compression', '0');
-            @set_time_limit(0);
-
-            echo "retry: 15000\n\n";
-            @ob_flush();
-            @flush();
-
-            while (!connection_aborted()) {
-                $this->emitDashboardEvent();
-                @ob_flush();
-                @flush();
-
-                if (connection_aborted()) {
-                    break;
-                }
-
-                sleep(15);
-            }
-        });
-
-        $response->headers->set('Content-Type', 'text/event-stream; charset=UTF-8');
-        $response->headers->set('Cache-Control', 'no-cache, no-store, must-revalidate');
-        $response->headers->set('Connection', 'keep-alive');
-        $response->headers->set('X-Accel-Buffering', 'no');
-
-        return $response;
     }
 
     #[Route('/clients', methods: ['GET'])]
@@ -73,6 +41,12 @@ class ApiController extends AbstractController
         return $this->json($this->clientPayload($client));
     }
 
+    #[Route('/clients/{id}/traffic', methods: ['GET'], name: 'api_client_traffic')]
+    public function clientTraffic(Client $client): JsonResponse
+    {
+        return $this->json($this->pageCache->cachedClientDetail((int) $client->getId()));
+    }
+
     #[Route('/devices', methods: ['GET'])]
     public function devices(): JsonResponse
     {
@@ -83,6 +57,12 @@ class ApiController extends AbstractController
     public function device(Device $device): JsonResponse
     {
         return $this->json($this->devicePayload($device));
+    }
+
+    #[Route('/devices/{id}/traffic', methods: ['GET'], name: 'api_device_traffic')]
+    public function deviceTraffic(Device $device): JsonResponse
+    {
+        return $this->json($this->pageCache->cachedDeviceDetail((int) $device->getId()));
     }
 
     #[Route('/devices/{id}/link-client', methods: ['POST'])]
@@ -131,12 +111,6 @@ class ApiController extends AbstractController
             'latestDevices' => $this->latestDevices(),
             'generatedAt' => (new \DateTimeImmutable())->format(DATE_ATOM),
         ];
-    }
-
-    private function emitDashboardEvent(): void
-    {
-        echo 'event: dashboard' . "\n";
-        echo 'data: '.json_encode($this->dashboardCache->cachedPayload(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . "\n\n";
     }
 
     private function report(\DateTimeImmutable $from): JsonResponse

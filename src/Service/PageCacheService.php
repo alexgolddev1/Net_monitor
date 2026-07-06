@@ -33,13 +33,31 @@ class PageCacheService
         return $this->readCache('clients') ?? $this->emptyClientRows();
     }
 
+    public function cachedDeviceDetail(int $deviceId): array
+    {
+        $details = $this->readCache('device_details') ?? [];
+
+        return $details[$deviceId] ?? $this->emptyDetailPayload();
+    }
+
+    public function cachedClientDetail(int $clientId): array
+    {
+        $details = $this->readCache('client_details') ?? [];
+
+        return $details[$clientId] ?? $this->emptyDetailPayload();
+    }
+
     public function refresh(): array
     {
         $deviceRows = $this->buildDeviceRows();
         $clientRows = $this->buildClientRows($deviceRows);
+        $deviceDetails = $this->buildDeviceDetails($deviceRows);
+        $clientDetails = $this->buildClientDetails($clientRows, $deviceRows, $deviceDetails);
 
         $this->writeCache('devices', $deviceRows);
         $this->writeCache('clients', $clientRows);
+        $this->writeCache('device_details', $deviceDetails);
+        $this->writeCache('client_details', $clientDetails);
 
         return [
             'devices' => count($deviceRows),
@@ -100,6 +118,111 @@ class PageCacheService
         usort($rows, fn (array $a, array $b): int => $b['today'] <=> $a['today']);
 
         return $rows;
+    }
+
+    private function buildDeviceDetails(array $deviceRows): array
+    {
+        $deviceIds = array_map(fn (array $row): int => (int) $row['device']['id'], $deviceRows);
+
+        $details = [];
+        foreach ($deviceRows as $row) {
+            $deviceId = (int) $row['device']['id'];
+            $details[$deviceId] = array_merge($this->emptyDetailPayload(), [
+                'today' => (int) $row['today'],
+                'todayDownload' => (int) $row['todayDownload'],
+                'todayUpload' => (int) $row['todayUpload'],
+                'month' => (int) $row['month'],
+            ]);
+        }
+
+        foreach ($this->dailyUsageByDevice($deviceIds) as $deviceId => $daily) {
+            $details[$deviceId]['daily'] = $daily;
+        }
+        foreach ($this->recentDomainsByDevice() as $deviceId => $rows) {
+            $details[$deviceId]['recentDomains'] = $rows;
+        }
+        foreach ($this->topDomainsByDeviceFromFlows(10) as $deviceId => $rows) {
+            $details[$deviceId]['topDomainsToday'] = $rows;
+        }
+        foreach ($this->topAppsByDevice() as $deviceId => $rows) {
+            $details[$deviceId]['topAppsToday'] = $rows;
+        }
+        foreach ($this->recentActivityByDevice() as $deviceId => $rows) {
+            $details[$deviceId]['recentActivity'] = $rows;
+        }
+
+        return $details;
+    }
+
+    private function buildClientDetails(array $clientRows, array $deviceRows, array $deviceDetails): array
+    {
+        $deviceIdsByClient = [];
+        foreach ($deviceRows as $deviceRow) {
+            $clientId = $deviceRow['device']['clientId'] ?? null;
+            if ($clientId === null) {
+                continue;
+            }
+
+            $deviceIdsByClient[(int) $clientId][] = (int) $deviceRow['device']['id'];
+        }
+
+        $details = [];
+        foreach ($clientRows as $clientRow) {
+            $clientId = (int) $clientRow['client']['id'];
+            $payload = array_merge($this->emptyDetailPayload(), [
+                'today' => (int) $clientRow['today'],
+                'todayDownload' => (int) $clientRow['todayDownload'],
+                'todayUpload' => (int) $clientRow['todayUpload'],
+                'month' => (int) $clientRow['month'],
+            ]);
+
+            $daily = [];
+            $recentDomains = [];
+            $topDomains = [];
+            $topApps = [];
+            $recentActivity = [];
+
+            foreach ($deviceIdsByClient[$clientId] ?? [] as $deviceId) {
+                $deviceDetail = $deviceDetails[$deviceId] ?? $this->emptyDetailPayload();
+                foreach ($deviceDetail['daily'] ?? [] as $day) {
+                    $date = $day['date'];
+                    $daily[$date] = ($daily[$date] ?? 0) + (int) $day['bytes'];
+                }
+                foreach ($deviceDetail['recentDomains'] ?? [] as $domainRow) {
+                    $domain = $domainRow['domain'];
+                    $recentDomains[$domain] ??= ['domain' => $domain, 'lastSeenAt' => $domainRow['lastSeenAt'], 'bytes' => 0];
+                    $recentDomains[$domain]['bytes'] += (int) $domainRow['bytes'];
+                    if (($domainRow['lastSeenAt'] ?? '') > ($recentDomains[$domain]['lastSeenAt'] ?? '')) {
+                        $recentDomains[$domain]['lastSeenAt'] = $domainRow['lastSeenAt'];
+                    }
+                }
+                foreach ($deviceDetail['topDomainsToday'] ?? [] as $domainRow) {
+                    $topDomains[$domainRow['domain']] = ($topDomains[$domainRow['domain']] ?? 0) + (int) $domainRow['bytes'];
+                }
+                foreach ($deviceDetail['topAppsToday'] ?? [] as $app => $bytes) {
+                    $topApps[$app] = ($topApps[$app] ?? 0) + (int) $bytes;
+                }
+                foreach ($deviceDetail['recentActivity'] ?? [] as $activityRow) {
+                    $recentActivity[] = $activityRow;
+                }
+            }
+
+            ksort($daily);
+            arsort($topDomains);
+            arsort($topApps);
+            usort($recentDomains, fn (array $a, array $b): int => strcmp((string) $b['lastSeenAt'], (string) $a['lastSeenAt']));
+            usort($recentActivity, fn (array $a, array $b): int => strcmp((string) $b['receivedAt'], (string) $a['receivedAt']));
+
+            $payload['daily'] = array_map(fn (string $date, int $bytes): array => ['date' => $date, 'bytes' => $bytes], array_keys($daily), array_values($daily));
+            $payload['recentDomains'] = array_slice(array_values($recentDomains), 0, 20);
+            $payload['topDomainsToday'] = array_map(fn (string $domain, int $bytes): array => ['domain' => $domain, 'bytes' => $bytes], array_keys(array_slice($topDomains, 0, 10, true)), array_values(array_slice($topDomains, 0, 10, true)));
+            $payload['topAppsToday'] = array_slice($topApps, 0, 10, true);
+            $payload['recentActivity'] = array_slice($recentActivity, 0, 20);
+
+            $details[$clientId] = $payload;
+        }
+
+        return $details;
     }
 
     private function buildClientRows(array $deviceRows): array
@@ -313,6 +436,185 @@ class PageCacheService
         }
 
         return $domainsByDevice;
+    }
+
+    private function dailyUsageByDevice(array $deviceIds): array
+    {
+        if ($deviceIds === []) {
+            return [];
+        }
+
+        $rows = $this->em->getConnection()->fetchAllAssociative(
+            'SELECT device_id deviceId, date usageDate, total_bytes totalBytes
+             FROM device_daily_usage
+             WHERE device_id IN ('.implode(',', array_map('intval', $deviceIds)).')
+               AND date >= :from
+             ORDER BY date ASC',
+            ['from' => (new \DateTimeImmutable('-29 days'))->format('Y-m-d')]
+        );
+
+        $daily = [];
+        foreach ($rows as $row) {
+            $daily[(int) $row['deviceId']][] = [
+                'date' => (string) $row['usageDate'],
+                'bytes' => (int) $row['totalBytes'],
+            ];
+        }
+
+        return $daily;
+    }
+
+    private function recentDomainsByDevice(): array
+    {
+        $rows = $this->em->getConnection()->fetchAllAssociative(
+            'SELECT device_id deviceId, domain, MAX(received_at) lastSeenAt, COALESCE(SUM(bytes), 0) totalBytes
+             FROM network_flow
+             WHERE device_id IS NOT NULL
+               AND received_at >= :from
+               AND domain IS NOT NULL
+               AND TRIM(domain) <> \'\'
+               AND LOWER(TRIM(domain)) <> \'unknown\'
+             GROUP BY device_id, domain
+             ORDER BY deviceId ASC, lastSeenAt DESC',
+            ['from' => (new \DateTimeImmutable('-30 days'))->format('Y-m-d H:i:s')]
+        );
+
+        $domainsByDevice = [];
+        foreach ($rows as $row) {
+            $deviceId = (int) $row['deviceId'];
+            if (count($domainsByDevice[$deviceId] ?? []) >= 20) {
+                continue;
+            }
+
+            $domainsByDevice[$deviceId][] = [
+                'domain' => (string) $row['domain'],
+                'lastSeenAt' => $row['lastSeenAt'] ?? null,
+                'bytes' => (int) $row['totalBytes'],
+            ];
+        }
+
+        return $domainsByDevice;
+    }
+
+    private function topAppsByDevice(): array
+    {
+        $rows = $this->em->getConnection()->fetchAllAssociative(
+            'SELECT device_id deviceId, app_name appName, COALESCE(SUM(bytes), 0) totalBytes
+             FROM network_flow
+             WHERE device_id IS NOT NULL
+               AND received_at BETWEEN :start AND :end
+               AND app_name IS NOT NULL
+               AND LOWER(app_name) <> \'unknown\'
+             GROUP BY device_id, appName
+             ORDER BY deviceId ASC, totalBytes DESC',
+            $this->trafficRangeParameters(1)
+        );
+
+        $appsByDevice = [];
+        foreach ($rows as $row) {
+            $deviceId = (int) $row['deviceId'];
+            if (count($appsByDevice[$deviceId] ?? []) >= 10) {
+                continue;
+            }
+
+            $label = $this->normalizeAppName(isset($row['appName']) ? (string) $row['appName'] : null);
+            $appsByDevice[$deviceId][$label] = ($appsByDevice[$deviceId][$label] ?? 0) + (int) $row['totalBytes'];
+        }
+
+        return $appsByDevice;
+    }
+
+    private function recentActivityByDevice(): array
+    {
+        $rows = $this->em->getConnection()->fetchAllAssociative(
+            'SELECT device_id deviceId, received_at receivedAt, direction, domain, app_name appName, bytes, src_ip srcIp, dst_ip dstIp, src_port srcPort, dst_port dstPort
+             FROM network_flow
+             WHERE device_id IS NOT NULL
+             ORDER BY received_at DESC
+             LIMIT 5000'
+        );
+
+        $activityByDevice = [];
+        foreach ($rows as $row) {
+            $deviceId = (int) $row['deviceId'];
+            if (count($activityByDevice[$deviceId] ?? []) >= 20) {
+                continue;
+            }
+
+            $activityByDevice[$deviceId][] = [
+                'receivedAt' => $row['receivedAt'] ?? null,
+                'direction' => $this->directionLabel((string) ($row['direction'] ?? '')),
+                'label' => $this->activityLabel($row),
+                'bytes' => (int) ($row['bytes'] ?? 0),
+            ];
+        }
+
+        return $activityByDevice;
+    }
+
+    private function emptyDetailPayload(): array
+    {
+        return [
+            'today' => 0,
+            'todayDownload' => 0,
+            'todayUpload' => 0,
+            'month' => 0,
+            'daily' => [],
+            'recentDomains' => [],
+            'topDomainsToday' => [],
+            'topAppsToday' => [],
+            'recentActivity' => [],
+        ];
+    }
+
+    private function normalizeAppName(?string $label): string
+    {
+        $label = $label !== null ? trim($label) : '';
+
+        return $label === '' || is_numeric($label) ? 'Unknown' : $label;
+    }
+
+    private function directionLabel(string $direction): string
+    {
+        return match ($direction) {
+            'upload' => 'Вихідний',
+            'download' => 'Вхідний',
+            'local' => 'Локальний',
+            default => 'Зовнішній',
+        };
+    }
+
+    private function activityLabel(array $row): string
+    {
+        $domain = isset($row['domain']) ? trim((string) $row['domain']) : '';
+        if ($domain !== '' && strcasecmp($domain, 'unknown') !== 0) {
+            return $domain;
+        }
+
+        $appName = $this->normalizeAppName(isset($row['appName']) ? (string) $row['appName'] : null);
+        if ($appName !== 'Unknown') {
+            return $appName;
+        }
+
+        $direction = (string) ($row['direction'] ?? '');
+        $src = $this->formatEndpoint($row['srcIp'] ?? null, $row['srcPort'] ?? null);
+        $dst = $this->formatEndpoint($row['dstIp'] ?? null, $row['dstPort'] ?? null);
+
+        return match ($direction) {
+            'upload' => $dst,
+            'download' => $src,
+            default => $dst !== '-' ? $dst : $src,
+        };
+    }
+
+    private function formatEndpoint(mixed $ip, mixed $port): string
+    {
+        $ip = is_string($ip) ? $ip : '';
+        if ($ip === '') {
+            return '-';
+        }
+
+        return is_numeric($port) ? sprintf('%s:%d', $ip, (int) $port) : $ip;
     }
 
     private function trafficRangeParameters(int $days): array

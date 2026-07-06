@@ -87,7 +87,6 @@ const appsChart = new Chart(document.getElementById('appsChart'), {
 });
 
 const dashboardApiUrl = {{ path('api_dashboard')|json_encode|raw }};
-const dashboardStreamUrl = {{ path('api_dashboard_stream')|json_encode|raw }};
 
 function formatBytes(bytes) {
   const value = Number(bytes) || 0;
@@ -226,25 +225,20 @@ function applyDashboard(data) {
   }
 }
 
-function startDashboardStream() {
-  const dashboardSource = new EventSource(dashboardStreamUrl);
-  dashboardSource.addEventListener('dashboard', (event) => {
-    try {
-      applyDashboard(JSON.parse(event.data));
-    } catch (error) {
-      console.warn('Invalid dashboard payload', error);
-    }
-  });
-  dashboardSource.addEventListener('error', () => {
-    console.warn('Dashboard stream disconnected');
-  });
+function loadDashboard() {
+  return fetch(dashboardApiUrl, { headers: { Accept: 'application/json' } })
+    .then((response) => response.ok ? response.json() : Promise.reject(new Error(`Dashboard API ${response.status}`)))
+    .then((data) => {
+      applyDashboard(data);
+      return data;
+    });
 }
 
-fetch(dashboardApiUrl, { headers: { Accept: 'application/json' } })
-  .then((response) => response.ok ? response.json() : Promise.reject(new Error(`Dashboard API ${response.status}`)))
-  .then((data) => {
-    applyDashboard(data);
-    startDashboardStream();
+loadDashboard()
+  .then(() => {
+    window.setInterval(() => {
+      loadDashboard().catch((error) => console.warn('Dashboard refresh failed', error));
+    }, 15000);
   })
   .catch((error) => {
     console.warn('Dashboard load failed', error);
