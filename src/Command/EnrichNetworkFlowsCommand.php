@@ -169,21 +169,25 @@ class EnrichNetworkFlowsCommand extends Command
         }
 
         $dnsRows = $this->connection->fetchAllAssociative(
-            'SELECT
-                a.resolved_ip,
-                COALESCE(c.domain, a.domain) domain,
-                CASE WHEN c.domain IS NULL THEN 0 ELSE 1 END aliasPriority,
-                COALESCE(c.last_seen_at, a.last_seen_at) domainLastSeenAt,
-                COALESCE(c.id, a.id) domainId
+            'SELECT a.resolved_ip, a.domain
              FROM dns_cache_record a
-             LEFT JOIN dns_cache_record c ON c.cname = a.domain AND c.record_type = \'CNAME\'
              WHERE a.resolved_ip IN (:ips)
                AND a.record_type IN (\'A\', \'AAAA\')
-             ORDER BY aliasPriority DESC, domainLastSeenAt DESC, domainId DESC',
+               AND NOT EXISTS (
+                   SELECT 1
+                   FROM dns_cache_record newer
+                   WHERE newer.resolved_ip = a.resolved_ip
+                     AND newer.record_type IN (\'A\', \'AAAA\')
+                     AND (
+                         newer.last_seen_at > a.last_seen_at
+                         OR (newer.last_seen_at = a.last_seen_at AND newer.id > a.id)
+                     )
+               )',
             ['ips' => array_values($candidateIps)],
             ['ips' => ArrayParameterType::STRING]
         );
 
+        $aliasesByCname = $this->fetchPreferredAliasesByCname($dnsRows);
         $dnsByIp = [];
         foreach ($dnsRows as $dnsRow) {
             $ip = isset($dnsRow['resolved_ip']) ? (string) $dnsRow['resolved_ip'] : '';
@@ -191,7 +195,8 @@ class EnrichNetworkFlowsCommand extends Command
                 continue;
             }
 
-            $domain = $this->normalizeDomain(isset($dnsRow['domain']) ? (string) $dnsRow['domain'] : null);
+            $addressDomain = $this->normalizeDomain(isset($dnsRow['domain']) ? (string) $dnsRow['domain'] : null);
+            $domain = $addressDomain !== null ? ($aliasesByCname[$addressDomain] ?? $addressDomain) : null;
             if ($domain === null) {
                 continue;
             }
@@ -200,6 +205,56 @@ class EnrichNetworkFlowsCommand extends Command
         }
 
         return $dnsByIp;
+    }
+
+    /**
+     * @param list<array<string, mixed>> $dnsRows
+     *
+     * @return array<string, string>
+     */
+    private function fetchPreferredAliasesByCname(array $dnsRows): array
+    {
+        $cnames = [];
+        foreach ($dnsRows as $dnsRow) {
+            $domain = $this->normalizeDomain(isset($dnsRow['domain']) ? (string) $dnsRow['domain'] : null);
+            if ($domain !== null) {
+                $cnames[$domain] = $domain;
+            }
+        }
+
+        if ($cnames === []) {
+            return [];
+        }
+
+        $aliasRows = $this->connection->fetchAllAssociative(
+            'SELECT c.cname, c.domain
+             FROM dns_cache_record c
+             WHERE c.cname IN (:cnames)
+               AND c.record_type = \'CNAME\'
+               AND NOT EXISTS (
+                   SELECT 1
+                   FROM dns_cache_record newer
+                   WHERE newer.cname = c.cname
+                     AND newer.record_type = \'CNAME\'
+                     AND (
+                         newer.last_seen_at > c.last_seen_at
+                         OR (newer.last_seen_at = c.last_seen_at AND newer.id > c.id)
+                     )
+               )',
+            ['cnames' => array_values($cnames)],
+            ['cnames' => ArrayParameterType::STRING]
+        );
+
+        $aliasesByCname = [];
+        foreach ($aliasRows as $aliasRow) {
+            $cname = $this->normalizeDomain(isset($aliasRow['cname']) ? (string) $aliasRow['cname'] : null);
+            $domain = $this->normalizeDomain(isset($aliasRow['domain']) ? (string) $aliasRow['domain'] : null);
+            if ($cname !== null && $domain !== null) {
+                $aliasesByCname[$cname] = $domain;
+            }
+        }
+
+        return $aliasesByCname;
     }
 
     /**

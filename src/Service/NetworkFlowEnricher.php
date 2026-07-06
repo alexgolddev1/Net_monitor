@@ -98,7 +98,7 @@ class NetworkFlowEnricher
     private function preferredDnsCacheRecord(DnsCacheRecord $record): DnsCacheRecord
     {
         $alias = $this->em->getRepository(DnsCacheRecord::class)->findOneBy(
-            ['cname' => $record->getDomain()],
+            ['cname' => $record->getDomain(), 'recordType' => 'CNAME'],
             ['lastSeenAt' => 'DESC', 'id' => 'DESC']
         );
 
