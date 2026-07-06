@@ -468,9 +468,37 @@ class AppController extends AbstractController
     private function flowDeviceFilter(Device $device): array
     {
         return [
-            'where' => 'device_id = :deviceId',
-            'params' => ['deviceId' => $device->getId()],
+            'where' => $this->deviceFlowWhere($device),
+            'params' => $this->deviceFlowParams($device),
         ];
+    }
+
+    private function deviceFlowWhere(Device $device): string
+    {
+        if ($device->getCurrentIp() === null || $device->getCurrentIp() === '') {
+            return 'device_id = :deviceId';
+        }
+
+        return '(device_id = :deviceId OR (
+            device_id IS NULL AND (
+                (direction = :upload AND src_ip = :currentIp)
+                OR (direction = :download AND dst_ip = :currentIp)
+            )
+        ))';
+    }
+
+    private function deviceFlowParams(Device $device): array
+    {
+        $params = ['deviceId' => $device->getId()];
+        if ($device->getCurrentIp() !== null && $device->getCurrentIp() !== '') {
+            $params += [
+                'currentIp' => $device->getCurrentIp(),
+                'upload' => 'upload',
+                'download' => 'download',
+            ];
+        }
+
+        return $params;
     }
 
     private function flowClientFilter(Client $client): array
@@ -552,8 +580,9 @@ class AppController extends AbstractController
     private function deviceRows(bool $hideLinked = false): array
     {
         $devices = $this->em->getRepository(Device::class)->findBy([], ['lastSeenAt' => 'DESC']);
-        $todayTotals = $this->usageTotalsByDeviceFromFlows(1);
+        $todayStats = $this->usageStatsByDeviceFromFlows(1);
         $monthTotals = $this->usageTotalsByDeviceFromFlows(30);
+        $topDomains = $this->topDomainsByDeviceFromFlows(3);
         $rows = [];
         foreach ($devices as $device) {
             if ($hideLinked && $device->getClient() !== null) {
@@ -561,10 +590,14 @@ class AppController extends AbstractController
             }
 
             $deviceId = $device->getId();
+            $stats = $deviceId !== null ? ($todayStats[$deviceId] ?? ['total' => 0, 'download' => 0, 'upload' => 0]) : ['total' => 0, 'download' => 0, 'upload' => 0];
             $rows[] = [
                 'device' => $device,
-                'today' => $deviceId !== null ? ($todayTotals[$deviceId] ?? 0) : 0,
+                'today' => $stats['total'],
+                'todayDownload' => $stats['download'],
+                'todayUpload' => $stats['upload'],
                 'month' => $deviceId !== null ? ($monthTotals[$deviceId] ?? 0) : 0,
+                'topDomains' => $deviceId !== null ? ($topDomains[$deviceId] ?? []) : [],
             ];
         }
         usort($rows, fn ($a, $b) => $b['today'] <=> $a['today']);
@@ -601,10 +634,45 @@ class AppController extends AbstractController
         return (int) $this->em->getConnection()->fetchOne(
             'SELECT COALESCE(SUM(bytes), 0)
              FROM network_flow
-             WHERE device_id = :deviceId
+             WHERE '.$this->deviceFlowWhere($device).'
                AND received_at BETWEEN :start AND :end',
-            ['deviceId' => $device->getId()] + $this->trafficRangeParameters($days)
+            $this->deviceFlowParams($device) + $this->trafficRangeParameters($days)
         );
+    }
+
+    /**
+     * @return array<int, array{total: int, download: int, upload: int}>
+     */
+    private function usageStatsByDeviceFromFlows(int $days): array
+    {
+        $rows = $this->em->getConnection()->fetchAllAssociative(
+            'SELECT
+                COALESCE(f.device_id, d.id) deviceId,
+                COALESCE(SUM(f.bytes), 0) totalBytes,
+                COALESCE(SUM(CASE WHEN f.direction = :download THEN f.bytes ELSE 0 END), 0) downloadBytes,
+                COALESCE(SUM(CASE WHEN f.direction = :upload THEN f.bytes ELSE 0 END), 0) uploadBytes
+             FROM network_flow f
+             LEFT JOIN device d ON f.device_id IS NULL
+               AND (
+                   (f.direction = :upload AND d.current_ip = f.src_ip)
+                   OR (f.direction = :download AND d.current_ip = f.dst_ip)
+               )
+             WHERE COALESCE(f.device_id, d.id) IS NOT NULL
+               AND f.received_at BETWEEN :start AND :end
+             GROUP BY COALESCE(f.device_id, d.id)',
+            ['download' => 'download', 'upload' => 'upload'] + $this->trafficRangeParameters($days)
+        );
+
+        $stats = [];
+        foreach ($rows as $row) {
+            $stats[(int) $row['deviceId']] = [
+                'total' => (int) $row['totalBytes'],
+                'download' => (int) $row['downloadBytes'],
+                'upload' => (int) $row['uploadBytes'],
+            ];
+        }
+
+        return $stats;
     }
 
     /**
@@ -613,12 +681,17 @@ class AppController extends AbstractController
     private function usageTotalsByDeviceFromFlows(int $days): array
     {
         $rows = $this->em->getConnection()->fetchAllAssociative(
-            'SELECT device_id deviceId, COALESCE(SUM(bytes), 0) totalBytes
-             FROM network_flow
-             WHERE device_id IS NOT NULL
-               AND received_at BETWEEN :start AND :end
-             GROUP BY device_id',
-            $this->trafficRangeParameters($days)
+            'SELECT COALESCE(f.device_id, d.id) deviceId, COALESCE(SUM(f.bytes), 0) totalBytes
+             FROM network_flow f
+             LEFT JOIN device d ON f.device_id IS NULL
+               AND (
+                   (f.direction = :upload AND d.current_ip = f.src_ip)
+                   OR (f.direction = :download AND d.current_ip = f.dst_ip)
+               )
+             WHERE COALESCE(f.device_id, d.id) IS NOT NULL
+               AND f.received_at BETWEEN :start AND :end
+             GROUP BY COALESCE(f.device_id, d.id)',
+            ['download' => 'download', 'upload' => 'upload'] + $this->trafficRangeParameters($days)
         );
 
         $totals = [];
@@ -627,6 +700,45 @@ class AppController extends AbstractController
         }
 
         return $totals;
+    }
+
+    /**
+     * @return array<int, list<array{domain: string, bytes: int}>>
+     */
+    private function topDomainsByDeviceFromFlows(int $limitPerDevice): array
+    {
+        $rows = $this->em->getConnection()->fetchAllAssociative(
+            'SELECT COALESCE(f.device_id, d.id) deviceId, f.domain domain, COALESCE(SUM(f.bytes), 0) totalBytes
+             FROM network_flow f
+             LEFT JOIN device d ON f.device_id IS NULL
+               AND (
+                   (f.direction = :upload AND d.current_ip = f.src_ip)
+                   OR (f.direction = :download AND d.current_ip = f.dst_ip)
+               )
+             WHERE COALESCE(f.device_id, d.id) IS NOT NULL
+               AND f.received_at BETWEEN :start AND :end
+               AND f.domain IS NOT NULL
+               AND TRIM(f.domain) <> \'\'
+               AND LOWER(TRIM(f.domain)) <> \'unknown\'
+             GROUP BY COALESCE(f.device_id, d.id), f.domain
+             ORDER BY deviceId ASC, totalBytes DESC',
+            ['download' => 'download', 'upload' => 'upload'] + $this->todayRangeParameters()
+        );
+
+        $domainsByDevice = [];
+        foreach ($rows as $row) {
+            $deviceId = (int) $row['deviceId'];
+            if (count($domainsByDevice[$deviceId] ?? []) >= $limitPerDevice) {
+                continue;
+            }
+
+            $domainsByDevice[$deviceId][] = [
+                'domain' => (string) $row['domain'],
+                'bytes' => (int) $row['totalBytes'],
+            ];
+        }
+
+        return $domainsByDevice;
     }
 
     private function dailyUsage(Device $device, int $days): array
