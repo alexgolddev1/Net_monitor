@@ -88,6 +88,7 @@
 <script type="application/json" id="usageChartLabels">{{ usageLabels|json_encode|raw }}</script>
 <script type="application/json" id="usageChartValues">{{ usageValues|json_encode|raw }}</script>
 <script>
+{% verbatim %}
 const usageLabels = JSON.parse(document.getElementById('usageChartLabels').textContent);
 const usageValues = JSON.parse(document.getElementById('usageChartValues').textContent);
 new Chart(document.getElementById('usageChart'), {
@@ -103,5 +104,6 @@ new Chart(document.getElementById('usageChart'), {
     }]
   }
 });
+{% endverbatim %}
 </script>
 {% endblock %}

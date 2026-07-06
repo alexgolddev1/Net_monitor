@@ -37,11 +37,14 @@ class AppController extends AbstractController
     }
 
     #[Route('/devices', name: 'devices')]
-    public function devices(): Response
+    public function devices(Request $request): Response
     {
+        $hideLinked = $request->query->getBoolean('hide_linked');
+
         return $this->render('devices/index.html.twig', [
-            'devices' => $this->deviceRows(),
+            'devices' => $this->deviceRows($hideLinked),
             'clients' => $this->em->getRepository(Client::class)->findBy(['status' => 'active'], ['fullName' => 'ASC']),
+            'hideLinked' => $hideLinked,
         ]);
     }
 
@@ -546,13 +549,17 @@ class AppController extends AbstractController
         return $port !== null ? sprintf('%s:%d', $ip, $port) : $ip;
     }
 
-    private function deviceRows(): array
+    private function deviceRows(bool $hideLinked = false): array
     {
         $devices = $this->em->getRepository(Device::class)->findBy([], ['lastSeenAt' => 'DESC']);
         $todayTotals = $this->usageTotalsByDeviceFromFlows(1);
         $monthTotals = $this->usageTotalsByDeviceFromFlows(30);
         $rows = [];
         foreach ($devices as $device) {
+            if ($hideLinked && $device->getClient() !== null) {
+                continue;
+            }
+
             $deviceId = $device->getId();
             $rows[] = [
                 'device' => $device,

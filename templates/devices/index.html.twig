@@ -2,6 +2,12 @@
 {% block title %}Пристрої{% endblock %}
 {% block heading %}Пристрої{% endblock %}
 {% block body %}
+<form method="get" style="display:flex; justify-content:flex-end; margin-bottom:12px;">
+    <label style="display:flex; align-items:center; gap:8px; margin:0; cursor:pointer;">
+        <input type="checkbox" name="hide_linked" value="1" {% if hideLinked %}checked{% endif %} onchange="this.form.submit()" style="width:auto;">
+        <span>Сховати прив'язані пристрої</span>
+    </label>
+</form>
 <table>
     <tr><th>MAC</th><th>Поточний IP</th><th>Ім'я хоста</th><th>Виробник</th><th>VLAN</th><th>Клієнт</th><th>Сьогодні</th><th>Остання активність</th><th>Прив'язка</th></tr>
     {% for row in devices %}
