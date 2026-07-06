@@ -198,6 +198,7 @@ class AppController extends AbstractController
             'deviceCount' => $deviceCount,
             'unlinkedCount' => $unlinked,
             'todayTraffic' => $this->todayTrafficFromFlows(),
+            'todayTrafficBreakdown' => $this->todayTrafficBreakdownFromFlows(),
             'topDevices' => $this->topDeviceRowsFromFlows(),
             'topClients' => $this->topClientRowsFromFlows(),
             'topApps' => $this->topAppsFromFlows(),
@@ -214,43 +215,88 @@ class AppController extends AbstractController
         );
     }
 
+    private function todayTrafficBreakdownFromFlows(): array
+    {
+        $row = $this->em->getConnection()->fetchAssociative(
+            'SELECT
+                COALESCE(SUM(CASE WHEN direction = :download THEN bytes ELSE 0 END), 0) downloadBytes,
+                COALESCE(SUM(CASE WHEN direction = :upload THEN bytes ELSE 0 END), 0) uploadBytes,
+                COALESCE(SUM(CASE WHEN direction = :local THEN bytes ELSE 0 END), 0) localBytes,
+                COALESCE(SUM(CASE WHEN direction = :external THEN bytes ELSE 0 END), 0) externalBytes
+             FROM network_flow
+             WHERE received_at BETWEEN :start AND :end',
+            [
+                'download' => 'download',
+                'upload' => 'upload',
+                'local' => 'local',
+                'external' => 'external',
+            ] + $this->todayRangeParameters()
+        );
+
+        return [
+            'download' => (int) ($row['downloadBytes'] ?? 0),
+            'upload' => (int) ($row['uploadBytes'] ?? 0),
+            'local' => (int) ($row['localBytes'] ?? 0),
+            'external' => (int) ($row['externalBytes'] ?? 0),
+        ];
+    }
+
     private function topDeviceRowsFromFlows(): array
     {
         $rows = $this->em->getConnection()->fetchAllAssociative(
-            'SELECT d.id, COALESCE(SUM(f.bytes), 0) totalBytes
+            'SELECT
+                d.id,
+                COALESCE(SUM(f.bytes), 0) totalBytes,
+                COALESCE(SUM(CASE WHEN f.direction = :download THEN f.bytes ELSE 0 END), 0) downloadBytes,
+                COALESCE(SUM(CASE WHEN f.direction = :upload THEN f.bytes ELSE 0 END), 0) uploadBytes
              FROM network_flow f
              INNER JOIN device d ON d.id = f.device_id
              WHERE f.received_at BETWEEN :start AND :end
              GROUP BY d.id
              ORDER BY totalBytes DESC
              LIMIT 10',
-            $this->todayRangeParameters()
+            ['download' => 'download', 'upload' => 'upload'] + $this->todayRangeParameters()
         );
 
         return array_values(array_filter(array_map(function (array $row): ?array {
             $device = $this->em->getRepository(Device::class)->find((int) $row['id']);
 
-            return $device ? ['device' => $device, 'today' => (int) $row['totalBytes'], 'month' => $this->usageTotal($device, 30)] : null;
+            return $device ? [
+                'device' => $device,
+                'today' => (int) $row['totalBytes'],
+                'todayDownload' => (int) $row['downloadBytes'],
+                'todayUpload' => (int) $row['uploadBytes'],
+                'month' => $this->usageTotal($device, 30),
+            ] : null;
         }, $rows)));
     }
 
     private function topClientRowsFromFlows(): array
     {
         $rows = $this->em->getConnection()->fetchAllAssociative(
-            'SELECT c.id, COALESCE(SUM(f.bytes), 0) totalBytes
+            'SELECT
+                c.id,
+                COALESCE(SUM(f.bytes), 0) totalBytes,
+                COALESCE(SUM(CASE WHEN f.direction = :download THEN f.bytes ELSE 0 END), 0) downloadBytes,
+                COALESCE(SUM(CASE WHEN f.direction = :upload THEN f.bytes ELSE 0 END), 0) uploadBytes
              FROM network_flow f
              INNER JOIN client c ON c.id = f.client_id
              WHERE f.received_at BETWEEN :start AND :end
              GROUP BY c.id
              ORDER BY totalBytes DESC
              LIMIT 10',
-            $this->todayRangeParameters()
+            ['download' => 'download', 'upload' => 'upload'] + $this->todayRangeParameters()
         );
 
         return array_values(array_filter(array_map(function (array $row): ?array {
             $client = $this->em->getRepository(Client::class)->find((int) $row['id']);
 
-            return $client ? ['client' => $client, 'today' => (int) $row['totalBytes']] : null;
+            return $client ? [
+                'client' => $client,
+                'today' => (int) $row['totalBytes'],
+                'todayDownload' => (int) $row['downloadBytes'],
+                'todayUpload' => (int) $row['uploadBytes'],
+            ] : null;
         }, $rows)));
     }
 
@@ -607,19 +653,35 @@ class AppController extends AbstractController
     private function clientRows(): array
     {
         $clients = $this->em->getRepository(Client::class)->findBy(['status' => 'active'], ['fullName' => 'ASC']);
+        $todayStats = $this->usageStatsByDeviceFromFlows(1);
+        $monthTotals = $this->usageTotalsByDeviceFromFlows(30);
         $rows = [];
         foreach ($clients as $client) {
             $today = 0;
+            $todayDownload = 0;
+            $todayUpload = 0;
             $month = 0;
             $lastSeen = null;
             foreach ($client->getDevices() as $device) {
-                $today += $this->usageTotal($device, 1);
-                $month += $this->usageTotal($device, 30);
+                $deviceId = $device->getId();
+                $stats = $deviceId !== null ? ($todayStats[$deviceId] ?? ['total' => 0, 'download' => 0, 'upload' => 0]) : ['total' => 0, 'download' => 0, 'upload' => 0];
+                $today += $stats['total'];
+                $todayDownload += $stats['download'];
+                $todayUpload += $stats['upload'];
+                $month += $deviceId !== null ? ($monthTotals[$deviceId] ?? 0) : 0;
                 if ($device->getLastSeenAt() && (!$lastSeen || $device->getLastSeenAt() > $lastSeen)) {
                     $lastSeen = $device->getLastSeenAt();
                 }
             }
-            $rows[] = ['client' => $client, 'today' => $today, 'month' => $month, 'lastSeen' => $lastSeen, 'deviceCount' => count($client->getDevices())];
+            $rows[] = [
+                'client' => $client,
+                'today' => $today,
+                'todayDownload' => $todayDownload,
+                'todayUpload' => $todayUpload,
+                'month' => $month,
+                'lastSeen' => $lastSeen,
+                'deviceCount' => count($client->getDevices()),
+            ];
         }
         usort($rows, fn ($a, $b) => $b['today'] <=> $a['today']);
         return $rows;

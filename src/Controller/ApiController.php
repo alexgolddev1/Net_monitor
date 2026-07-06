@@ -121,6 +121,7 @@ class ApiController extends AbstractController
             'devices' => $this->em->getRepository(Device::class)->count([]),
             'unlinkedDevices' => (int) $this->em->createQuery('SELECT COUNT(d.id) FROM App\Entity\Device d WHERE d.client IS NULL')->getSingleScalarResult(),
             'todayTraffic' => $this->todayTrafficFromFlows(),
+            'todayTrafficBreakdown' => $this->todayTrafficBreakdownFromFlows(),
             'topDevices' => $this->topDeviceRowsFromFlows(),
             'topClients' => $this->topClientRowsFromFlows(),
             'topApps' => $this->topAppsFromFlows(),
@@ -178,17 +179,47 @@ class ApiController extends AbstractController
         );
     }
 
+    private function todayTrafficBreakdownFromFlows(): array
+    {
+        $row = $this->em->getConnection()->fetchAssociative(
+            'SELECT
+                COALESCE(SUM(CASE WHEN direction = :download THEN bytes ELSE 0 END), 0) downloadBytes,
+                COALESCE(SUM(CASE WHEN direction = :upload THEN bytes ELSE 0 END), 0) uploadBytes,
+                COALESCE(SUM(CASE WHEN direction = :local THEN bytes ELSE 0 END), 0) localBytes,
+                COALESCE(SUM(CASE WHEN direction = :external THEN bytes ELSE 0 END), 0) externalBytes
+             FROM network_flow
+             WHERE received_at BETWEEN :start AND :end',
+            [
+                'download' => 'download',
+                'upload' => 'upload',
+                'local' => 'local',
+                'external' => 'external',
+            ] + $this->todayRangeParameters()
+        );
+
+        return [
+            'download' => (int) ($row['downloadBytes'] ?? 0),
+            'upload' => (int) ($row['uploadBytes'] ?? 0),
+            'local' => (int) ($row['localBytes'] ?? 0),
+            'external' => (int) ($row['externalBytes'] ?? 0),
+        ];
+    }
+
     private function topDeviceRowsFromFlows(): array
     {
         $rows = $this->em->getConnection()->fetchAllAssociative(
-            'SELECT d.id, COALESCE(SUM(f.bytes), 0) totalBytes
+            'SELECT
+                d.id,
+                COALESCE(SUM(f.bytes), 0) totalBytes,
+                COALESCE(SUM(CASE WHEN f.direction = :download THEN f.bytes ELSE 0 END), 0) downloadBytes,
+                COALESCE(SUM(CASE WHEN f.direction = :upload THEN f.bytes ELSE 0 END), 0) uploadBytes
              FROM network_flow f
              INNER JOIN device d ON d.id = f.device_id
              WHERE f.received_at BETWEEN :start AND :end
              GROUP BY d.id
              ORDER BY totalBytes DESC
              LIMIT 10',
-            $this->todayRangeParameters()
+            ['download' => 'download', 'upload' => 'upload'] + $this->todayRangeParameters()
         );
 
         $payload = [];
@@ -203,6 +234,8 @@ class ApiController extends AbstractController
                 'mac' => $device->getMac(),
                 'currentIp' => $device->getCurrentIp(),
                 'today' => (int) $row['totalBytes'],
+                'todayDownload' => (int) $row['downloadBytes'],
+                'todayUpload' => (int) $row['uploadBytes'],
                 'month' => $this->usageTotal($device, 30),
             ];
         }
@@ -213,14 +246,18 @@ class ApiController extends AbstractController
     private function topClientRowsFromFlows(): array
     {
         $rows = $this->em->getConnection()->fetchAllAssociative(
-            'SELECT c.id, COALESCE(SUM(f.bytes), 0) totalBytes
+            'SELECT
+                c.id,
+                COALESCE(SUM(f.bytes), 0) totalBytes,
+                COALESCE(SUM(CASE WHEN f.direction = :download THEN f.bytes ELSE 0 END), 0) downloadBytes,
+                COALESCE(SUM(CASE WHEN f.direction = :upload THEN f.bytes ELSE 0 END), 0) uploadBytes
              FROM network_flow f
              INNER JOIN client c ON c.id = f.client_id
              WHERE f.received_at BETWEEN :start AND :end
              GROUP BY c.id
              ORDER BY totalBytes DESC
              LIMIT 10',
-            $this->todayRangeParameters()
+            ['download' => 'download', 'upload' => 'upload'] + $this->todayRangeParameters()
         );
 
         $payload = [];
@@ -236,6 +273,8 @@ class ApiController extends AbstractController
                 'displayName' => $client->getDisplayName(),
                 'roomNumber' => $client->getRoomNumber(),
                 'today' => (int) $row['totalBytes'],
+                'todayDownload' => (int) $row['downloadBytes'],
+                'todayUpload' => (int) $row['uploadBytes'],
             ];
         }
 

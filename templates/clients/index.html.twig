@@ -6,7 +6,7 @@
     <button type="button" onclick="document.getElementById('client-create').showModal()">Додати клієнта</button>
 </div>
 <table>
-    <tr><th>ПІБ</th><th>Кімната</th><th>Телефон</th><th>Пристрої</th><th>Сьогодні</th><th>Місяць</th><th>Остання активність</th><th>Дії</th></tr>
+    <tr><th>ПІБ</th><th>Кімната</th><th>Телефон</th><th>Пристрої</th><th>Усього</th><th>Вхідний</th><th>Вихідний</th><th>Місяць</th><th>Остання активність</th><th>Дії</th></tr>
     {% for row in clients %}
         <tr>
             <td><a href="{{ path('client_show',{id:row.client.id}) }}">{{ row.client.displayName }}</a></td>
@@ -14,6 +14,8 @@
             <td>{{ row.client.phone }}</td>
             <td>{{ row.deviceCount }}</td>
             <td>{{ (row.today / 1048576)|number_format(1) }} МБ</td>
+            <td>{{ (row.todayDownload / 1048576)|number_format(1) }} МБ</td>
+            <td>{{ (row.todayUpload / 1048576)|number_format(1) }} МБ</td>
             <td>{{ (row.month / 1048576)|number_format(1) }} МБ</td>
             <td>{{ row.lastSeen ? row.lastSeen|date('Y-m-d H:i') : '-' }}</td>
             <td>

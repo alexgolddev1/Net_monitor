@@ -9,7 +9,7 @@
     </label>
 </form>
 <table>
-    <tr><th>MAC</th><th>Поточний IP</th><th>Ім'я хоста</th><th>Виробник</th><th>VLAN</th><th>Клієнт</th><th>Сьогодні</th><th>Вхідний</th><th>Вихідний</th><th>Топ домени сьогодні</th><th>Остання активність</th><th>Прив'язка</th></tr>
+    <tr><th>MAC</th><th>Поточний IP</th><th>Ім'я хоста</th><th>Виробник</th><th>VLAN</th><th>Клієнт</th><th>Усього</th><th>Вхідний</th><th>Вихідний</th><th>Топ домени сьогодні</th><th>Остання активність</th><th>Прив'язка</th></tr>
     {% for row in devices %}
         <tr>
             <td><a href="{{ path('device_show',{id:row.device.id}) }}">{{ row.device.mac }}</a></td>
