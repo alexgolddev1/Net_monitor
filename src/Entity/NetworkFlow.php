@@ -12,6 +12,8 @@ use Doctrine\ORM\Mapping as ORM;
 #[ORM\Index(columns: ['client_id', 'received_at'], name: 'idx_network_flow_client_received')]
 #[ORM\Index(columns: ['src_ip'], name: 'idx_network_flow_src_ip')]
 #[ORM\Index(columns: ['dst_ip'], name: 'idx_network_flow_dst_ip')]
+#[ORM\Index(columns: ['post_nat_src_ip'], name: 'idx_network_flow_post_nat_src_ip')]
+#[ORM\Index(columns: ['post_nat_dst_ip'], name: 'idx_network_flow_post_nat_dst_ip')]
 #[ORM\Index(columns: ['direction'], name: 'idx_network_flow_direction')]
 #[ORM\Index(columns: ['domain'], name: 'idx_network_flow_domain')]
 #[ORM\Index(columns: ['app_name'], name: 'idx_network_flow_app_name')]
@@ -30,6 +32,12 @@ class NetworkFlow
 
     #[ORM\Column(length: 45, nullable: true)]
     private ?string $dstIp = null;
+
+    #[ORM\Column(length: 45, nullable: true)]
+    private ?string $postNatSrcIp = null;
+
+    #[ORM\Column(length: 45, nullable: true)]
+    private ?string $postNatDstIp = null;
 
     #[ORM\Column(nullable: true)]
     private ?int $srcPort = null;
@@ -91,6 +99,10 @@ class NetworkFlow
     public function setSrcIp(?string $srcIp): self { $this->srcIp = $srcIp; return $this; }
     public function getDstIp(): ?string { return $this->dstIp; }
     public function setDstIp(?string $dstIp): self { $this->dstIp = $dstIp; return $this; }
+    public function getPostNatSrcIp(): ?string { return $this->postNatSrcIp; }
+    public function setPostNatSrcIp(?string $postNatSrcIp): self { $this->postNatSrcIp = $postNatSrcIp; return $this; }
+    public function getPostNatDstIp(): ?string { return $this->postNatDstIp; }
+    public function setPostNatDstIp(?string $postNatDstIp): self { $this->postNatDstIp = $postNatDstIp; return $this; }
     public function getSrcPort(): ?int { return $this->srcPort; }
     public function setSrcPort(?int $srcPort): self { $this->srcPort = $srcPort; return $this; }
     public function getDstPort(): ?int { return $this->dstPort; }

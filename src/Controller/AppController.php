@@ -266,7 +266,6 @@ class AppController extends AbstractController
                 'today' => (int) $row['totalBytes'],
                 'todayDownload' => (int) $row['downloadBytes'],
                 'todayUpload' => (int) $row['uploadBytes'],
-                'month' => $this->usageTotal($device, 30),
             ] : null;
         }, $rows)));
     }

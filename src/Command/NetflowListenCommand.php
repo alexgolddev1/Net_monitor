@@ -195,6 +195,8 @@ class NetflowListenCommand extends Command
                     'exporter_ip' => $flow->exporterIp,
                     'src_ip' => $flow->srcIPv4,
                     'dst_ip' => $flow->dstIPv4,
+                    'post_nat_src_ip' => $flow->postNatSrcIPv4,
+                    'post_nat_dst_ip' => $flow->postNatDstIPv4,
                     'src_port' => $flow->srcPort,
                     'dst_port' => $flow->dstPort,
                     'protocol' => $flow->protocol,
@@ -222,8 +224,8 @@ class NetflowListenCommand extends Command
 
     private function detectDirection(ParsedFlow $flow): string
     {
-        $srcLocal = $flow->srcIPv4 !== null && $this->isLocalIp($flow->srcIPv4);
-        $dstLocal = $flow->dstIPv4 !== null && $this->isLocalIp($flow->dstIPv4);
+        $srcLocal = $this->firstLocalIp($flow->srcIPv4, $flow->postNatSrcIPv4) !== null;
+        $dstLocal = $this->firstLocalIp($flow->dstIPv4, $flow->postNatDstIPv4) !== null;
 
         if ($srcLocal && !$dstLocal) {
             return 'upload';
@@ -246,9 +248,9 @@ class NetflowListenCommand extends Command
     private function matchDevice(ParsedFlow $flow, string $direction): array
     {
         $ip = match ($direction) {
-            'upload' => $flow->srcIPv4,
-            'download' => $flow->dstIPv4,
-            'local' => $flow->srcIPv4 ?? $flow->dstIPv4,
+            'upload' => $this->firstLocalIp($flow->srcIPv4, $flow->postNatSrcIPv4),
+            'download' => $this->firstLocalIp($flow->dstIPv4, $flow->postNatDstIPv4),
+            'local' => $this->firstLocalIp($flow->srcIPv4, $flow->dstIPv4, $flow->postNatSrcIPv4, $flow->postNatDstIPv4),
             default => null,
         };
 
@@ -272,6 +274,17 @@ class NetflowListenCommand extends Command
         $this->deviceCacheByIp[$ip] = $match;
 
         return $match;
+    }
+
+    private function firstLocalIp(?string ...$ips): ?string
+    {
+        foreach ($ips as $ip) {
+            if ($ip !== null && $this->isLocalIp($ip)) {
+                return $ip;
+            }
+        }
+
+        return null;
     }
 
     private function formatDateTime(?\DateTimeImmutable $dateTime): ?string

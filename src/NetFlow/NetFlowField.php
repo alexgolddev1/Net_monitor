@@ -16,6 +16,8 @@ class NetFlowField
     public const OUTPUT_SNMP = 14;
     public const LAST_SWITCHED = 21;
     public const FIRST_SWITCHED = 22;
+    public const POST_NAT_SRC_IPV4_ADDR = 225;
+    public const POST_NAT_DST_IPV4_ADDR = 226;
 
     public const ALIASES = [
         self::IN_BYTES => 'bytes',
@@ -30,6 +32,8 @@ class NetFlowField
         self::OUTPUT_SNMP => 'outputInterface',
         self::LAST_SWITCHED => 'lastSeen',
         self::FIRST_SWITCHED => 'firstSeen',
+        self::POST_NAT_SRC_IPV4_ADDR => 'postNatSrcIPv4',
+        self::POST_NAT_DST_IPV4_ADDR => 'postNatDstIPv4',
     ];
 
     public function __construct(

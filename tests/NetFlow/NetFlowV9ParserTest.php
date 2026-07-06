@@ -46,6 +46,8 @@ class NetFlowV9ParserTest extends TestCase
         self::assertCount(1, $flows);
         self::assertSame('192.168.0.43', $flows[0]->srcIPv4);
         self::assertSame('142.250.74.142', $flows[0]->dstIPv4);
+        self::assertSame('31.42.166.5', $flows[0]->postNatSrcIPv4);
+        self::assertSame('142.250.74.142', $flows[0]->postNatDstIPv4);
         self::assertSame(123456, $flows[0]->bytes);
         self::assertSame(100, $flows[0]->packets);
         self::assertSame(6, $flows[0]->protocol);
@@ -62,9 +64,11 @@ class NetFlowV9ParserTest extends TestCase
 
     private function templateFlowSet(): string
     {
-        $template = pack('nn', 256, 9)
+        $template = pack('nn', 256, 11)
             . pack('nn', 8, 4)
             . pack('nn', 12, 4)
+            . pack('nn', 225, 4)
+            . pack('nn', 226, 4)
             . pack('nn', 1, 4)
             . pack('nn', 2, 4)
             . pack('nn', 4, 1)
@@ -79,6 +83,8 @@ class NetFlowV9ParserTest extends TestCase
     private function dataFlowSet(): string
     {
         $record = inet_pton('192.168.0.43')
+            . inet_pton('142.250.74.142')
+            . inet_pton('31.42.166.5')
             . inet_pton('142.250.74.142')
             . pack('N', 123456)
             . pack('N', 100)

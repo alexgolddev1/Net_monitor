@@ -229,7 +229,12 @@ class NetFlowV9Parser
      */
     private function decodeField(NetFlowField $field, string $bytes): mixed
     {
-        if (($field->type === NetFlowField::IPV4_SRC_ADDR || $field->type === NetFlowField::IPV4_DST_ADDR) && $field->length === 4) {
+        if (in_array($field->type, [
+            NetFlowField::IPV4_SRC_ADDR,
+            NetFlowField::IPV4_DST_ADDR,
+            NetFlowField::POST_NAT_SRC_IPV4_ADDR,
+            NetFlowField::POST_NAT_DST_IPV4_ADDR,
+        ], true) && $field->length === 4) {
             $address = inet_ntop($bytes);
 
             return $address === false ? null : $address;
@@ -278,6 +283,8 @@ class NetFlowV9Parser
             sourceId: $sourceId,
             srcIPv4: $fields['srcIPv4'] ?? null,
             dstIPv4: $fields['dstIPv4'] ?? null,
+            postNatSrcIPv4: $fields['postNatSrcIPv4'] ?? null,
+            postNatDstIPv4: $fields['postNatDstIPv4'] ?? null,
             bytes: $fields['bytes'] ?? null,
             packets: $fields['packets'] ?? null,
             protocol: $fields['protocol'] ?? null,

@@ -236,7 +236,6 @@ class ApiController extends AbstractController
                 'today' => (int) $row['totalBytes'],
                 'todayDownload' => (int) $row['downloadBytes'],
                 'todayUpload' => (int) $row['uploadBytes'],
-                'month' => $this->usageTotal($device, 30),
             ];
         }
 
@@ -362,16 +361,6 @@ class ApiController extends AbstractController
         }
 
         return $payload;
-    }
-
-    private function usageTotal(Device $device, int $days): int
-    {
-        $from = new \DateTimeImmutable(sprintf('-%d days', $days - 1));
-
-        return (int) $this->em->createQuery('SELECT COALESCE(SUM(u.totalBytes), 0) FROM App\Entity\DeviceDailyUsage u WHERE u.device = :device AND u.date >= :from')
-            ->setParameter('device', $device)
-            ->setParameter('from', $from)
-            ->getSingleScalarResult();
     }
 
     private function normalizeAppName(?string $appName): string

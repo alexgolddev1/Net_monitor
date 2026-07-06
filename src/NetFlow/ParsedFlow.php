@@ -14,6 +14,8 @@ class ParsedFlow
         public readonly int $sourceId,
         public readonly ?string $srcIPv4,
         public readonly ?string $dstIPv4,
+        public readonly ?string $postNatSrcIPv4,
+        public readonly ?string $postNatDstIPv4,
         public readonly ?int $bytes,
         public readonly ?int $packets,
         public readonly ?int $protocol,
