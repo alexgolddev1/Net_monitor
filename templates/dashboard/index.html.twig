@@ -3,30 +3,27 @@
 {% block heading %}Панель{% endblock %}
 {% block body %}
 <div class="grid stats">
-    <div class="stat"><div class="muted">Клієнти</div><div class="value" id="stat-clients">{{ clientCount }}</div></div>
-    <div class="stat"><div class="muted">Пристрої</div><div class="value" id="stat-devices">{{ deviceCount }}</div></div>
-    <div class="stat"><div class="muted">Без зв'язку</div><div class="value" id="stat-unlinked">{{ unlinkedCount }}</div></div>
-    <div class="stat"><div class="muted">Трафік за сьогодні</div><div class="value" id="stat-traffic">{{ (todayTraffic / 1048576)|number_format(1) }} МБ</div></div>
-    <div class="stat"><div class="muted">Вхідний</div><div class="value" id="stat-download">{{ (todayTrafficBreakdown.download / 1048576)|number_format(1) }} МБ</div></div>
-    <div class="stat"><div class="muted">Вихідний</div><div class="value" id="stat-upload">{{ (todayTrafficBreakdown.upload / 1048576)|number_format(1) }} МБ</div></div>
-    <div class="stat"><div class="muted">Локальний</div><div class="value" id="stat-local">{{ (todayTrafficBreakdown.local / 1048576)|number_format(1) }} МБ</div></div>
-    <div class="stat"><div class="muted">Зовнішній / NAT</div><div class="value" id="stat-external">{{ (todayTrafficBreakdown.external / 1048576)|number_format(1) }} МБ</div></div>
+    <div class="stat"><div class="muted">Клієнти</div><div class="value" id="stat-clients">...</div></div>
+    <div class="stat"><div class="muted">Пристрої</div><div class="value" id="stat-devices">...</div></div>
+    <div class="stat"><div class="muted">Без зв'язку</div><div class="value" id="stat-unlinked">...</div></div>
+    <div class="stat"><div class="muted">Трафік за сьогодні</div><div class="value" id="stat-traffic">...</div></div>
+    <div class="stat"><div class="muted">Вхідний</div><div class="value" id="stat-download">...</div></div>
+    <div class="stat"><div class="muted">Вихідний</div><div class="value" id="stat-upload">...</div></div>
+    <div class="stat"><div class="muted">Локальний</div><div class="value" id="stat-local">...</div></div>
+    <div class="stat"><div class="muted">Зовнішній / NAT</div><div class="value" id="stat-external">...</div></div>
 </div>
+<div id="dashboard-loading" class="muted" style="display:flex; align-items:center; gap:8px; margin:-4px 0 14px;">
+    <span style="width:14px; height:14px; border:2px solid #d8dee8; border-top-color:#0f766e; border-radius:50%; display:inline-block; animation:spin .8s linear infinite;"></span>
+    <span>Завантаження даних...</span>
+</div>
+<style>@keyframes spin { to { transform: rotate(360deg); } }</style>
 <div class="grid two">
     <section class="panel">
         <h2>Топ пристроїв за сьогодні</h2>
         <table>
             <thead><tr><th>MAC</th><th>IP</th><th>Усього</th><th>Вхідний</th><th>Вихідний</th></tr></thead>
             <tbody id="top-devices-body">
-            {% for row in topDevices %}
-                <tr>
-                    <td><a href="{{ path('device_show',{id:row.device.id}) }}">{{ row.device.mac }}</a></td>
-                    <td>{{ row.device.currentIp }}</td>
-                    <td>{{ (row.today / 1048576)|number_format(1) }} МБ</td>
-                    <td>{{ (row.todayDownload / 1048576)|number_format(1) }} МБ</td>
-                    <td>{{ (row.todayUpload / 1048576)|number_format(1) }} МБ</td>
-                </tr>
-            {% endfor %}
+                <tr><td colspan="5" class="muted">Завантаження...</td></tr>
             </tbody>
         </table>
     </section>
@@ -35,15 +32,7 @@
         <table>
             <thead><tr><th>Клієнт</th><th>Кімната</th><th>Усього</th><th>Вхідний</th><th>Вихідний</th></tr></thead>
             <tbody id="top-clients-body">
-            {% for row in topClients %}
-                <tr>
-                    <td><a href="{{ path('client_show',{id:row.client.id}) }}">{{ row.client.displayName }}</a></td>
-                    <td>{{ row.client.roomNumber }}</td>
-                    <td>{{ (row.today / 1048576)|number_format(1) }} МБ</td>
-                    <td>{{ (row.todayDownload / 1048576)|number_format(1) }} МБ</td>
-                    <td>{{ (row.todayUpload / 1048576)|number_format(1) }} МБ</td>
-                </tr>
-            {% endfor %}
+                <tr><td colspan="5" class="muted">Завантаження...</td></tr>
             </tbody>
         </table>
     </section>
@@ -55,9 +44,7 @@
         <h2>Топ доменів</h2>
         <table>
             <tbody id="top-domains-body">
-            {% for domain, bytes in topDomains %}
-                <tr><td>{% if domain != 'Unknown' %}<img class="favicon" src="https://www.google.com/s2/favicons?domain={{ domain|url_encode }}&sz=64" alt="">{% endif %}{{ domain }}</td><td>{{ (bytes / 1048576)|number_format(1) }} МБ</td></tr>
-            {% endfor %}
+                <tr><td colspan="2" class="muted">Завантаження...</td></tr>
             </tbody>
         </table>
     </section>
@@ -66,9 +53,7 @@
         <table>
             <thead><tr><th>MAC</th><th>Ім'я хоста</th><th>Вперше побачено</th></tr></thead>
             <tbody id="latest-devices-body">
-            {% for device in latestDevices %}
-                <tr><td>{{ device.mac }}</td><td>{{ device.hostname }}</td><td>{{ device.firstSeenAt ? device.firstSeenAt|date('Y-m-d H:i') : '-' }}</td></tr>
-            {% endfor %}
+                <tr><td colspan="3" class="muted">Завантаження...</td></tr>
             </tbody>
         </table>
     </section>
@@ -76,7 +61,7 @@
 {% endblock %}
 {% block scripts %}
 <script>
-const initialTopApps = {{ topApps|json_encode|raw }};
+const initialTopApps = {};
 const appsChart = new Chart(document.getElementById('appsChart'), {
   type: 'bar',
   data: { labels: Object.keys(initialTopApps), datasets: [{ label: 'Трафік', data: Object.values(initialTopApps), backgroundColor: '#0f766e' }] },
@@ -101,6 +86,7 @@ const appsChart = new Chart(document.getElementById('appsChart'), {
   }
 });
 
+const dashboardApiUrl = {{ path('api_dashboard')|json_encode|raw }};
 const dashboardStreamUrl = {{ path('api_dashboard_stream')|json_encode|raw }};
 
 function formatBytes(bytes) {
@@ -223,18 +209,38 @@ function applyDashboard(data) {
   renderTopDomains(data.topDomains || []);
   renderLatestDevices(data.latestDevices || []);
   updateAppsChart(data.topApps || {});
+  const loading = document.getElementById('dashboard-loading');
+  if (loading) {
+    loading.hidden = true;
+  }
 }
 
-const dashboardSource = new EventSource(dashboardStreamUrl);
-dashboardSource.addEventListener('dashboard', (event) => {
-  try {
-    applyDashboard(JSON.parse(event.data));
-  } catch (error) {
-    console.warn('Invalid dashboard payload', error);
-  }
-});
-dashboardSource.addEventListener('error', () => {
-  console.warn('Dashboard stream disconnected');
-});
+function startDashboardStream() {
+  const dashboardSource = new EventSource(dashboardStreamUrl);
+  dashboardSource.addEventListener('dashboard', (event) => {
+    try {
+      applyDashboard(JSON.parse(event.data));
+    } catch (error) {
+      console.warn('Invalid dashboard payload', error);
+    }
+  });
+  dashboardSource.addEventListener('error', () => {
+    console.warn('Dashboard stream disconnected');
+  });
+}
+
+fetch(dashboardApiUrl, { headers: { Accept: 'application/json' } })
+  .then((response) => response.ok ? response.json() : Promise.reject(new Error(`Dashboard API ${response.status}`)))
+  .then((data) => {
+    applyDashboard(data);
+    startDashboardStream();
+  })
+  .catch((error) => {
+    console.warn('Dashboard load failed', error);
+    const loading = document.getElementById('dashboard-loading');
+    if (loading) {
+      loading.textContent = 'Не вдалося завантажити дані.';
+    }
+  });
 </script>
 {% endblock %}

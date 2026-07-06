@@ -33,7 +33,7 @@ class AppController extends AbstractController
     #[Route('/dashboard', name: 'dashboard')]
     public function dashboard(): Response
     {
-        return $this->render('dashboard/index.html.twig', $this->dashboardData());
+        return $this->render('dashboard/index.html.twig');
     }
 
     #[Route('/devices', name: 'devices')]
@@ -154,9 +154,18 @@ class AppController extends AbstractController
     #[Route('/clients/{id}', name: 'client_show', requirements: ['id' => '\d+'])]
     public function client(Client $client): Response
     {
+        $deviceRows = $this->clientDeviceRows($client);
+        $today = array_sum(array_column($deviceRows, 'today'));
+        $todayDownload = array_sum(array_column($deviceRows, 'todayDownload'));
+        $todayUpload = array_sum(array_column($deviceRows, 'todayUpload'));
+
         return $this->render('clients/show.html.twig', [
             'client' => $client,
             'devices' => $client->getDevices(),
+            'deviceRows' => $deviceRows,
+            'today' => $today,
+            'todayDownload' => $todayDownload,
+            'todayUpload' => $todayUpload,
             'daily' => $this->clientDailyUsage($client, 30),
             'flows' => $this->clientFlows($client, 30),
             'recentDomains' => $this->recentDomainsForClient($client),
@@ -686,6 +695,27 @@ class AppController extends AbstractController
         return $rows;
     }
 
+    private function clientDeviceRows(Client $client): array
+    {
+        $todayStats = $this->usageStatsByDeviceFromFlows(1);
+        $rows = [];
+
+        foreach ($client->getDevices() as $device) {
+            $deviceId = $device->getId();
+            $stats = $deviceId !== null ? ($todayStats[$deviceId] ?? ['total' => 0, 'download' => 0, 'upload' => 0]) : ['total' => 0, 'download' => 0, 'upload' => 0];
+            $rows[] = [
+                'device' => $device,
+                'today' => $stats['total'],
+                'todayDownload' => $stats['download'],
+                'todayUpload' => $stats['upload'],
+            ];
+        }
+
+        usort($rows, fn ($a, $b) => $b['today'] <=> $a['today']);
+
+        return $rows;
+    }
+
     private function usageTotal(Device $device, int $days): int
     {
         if ($device->getId() === null) {
@@ -716,7 +746,7 @@ class AppController extends AbstractController
              LEFT JOIN device d ON f.device_id IS NULL
                AND (
                    (f.direction = :upload AND d.current_ip = f.src_ip)
-                   OR (f.direction = :download AND d.current_ip = f.dst_ip)
+                   OR (f.direction = :download AND d.current_ip = COALESCE(f.post_nat_dst_ip, f.dst_ip))
                )
              WHERE COALESCE(f.device_id, d.id) IS NOT NULL
                AND f.received_at BETWEEN :start AND :end
@@ -747,7 +777,7 @@ class AppController extends AbstractController
              LEFT JOIN device d ON f.device_id IS NULL
                AND (
                    (f.direction = :upload AND d.current_ip = f.src_ip)
-                   OR (f.direction = :download AND d.current_ip = f.dst_ip)
+                   OR (f.direction = :download AND d.current_ip = COALESCE(f.post_nat_dst_ip, f.dst_ip))
                )
              WHERE COALESCE(f.device_id, d.id) IS NOT NULL
                AND f.received_at BETWEEN :start AND :end
@@ -774,7 +804,7 @@ class AppController extends AbstractController
              LEFT JOIN device d ON f.device_id IS NULL
                AND (
                    (f.direction = :upload AND d.current_ip = f.src_ip)
-                   OR (f.direction = :download AND d.current_ip = f.dst_ip)
+                   OR (f.direction = :download AND d.current_ip = COALESCE(f.post_nat_dst_ip, f.dst_ip))
                )
              WHERE COALESCE(f.device_id, d.id) IS NOT NULL
                AND f.received_at BETWEEN :start AND :end
