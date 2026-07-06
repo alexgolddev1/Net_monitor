@@ -22,9 +22,14 @@ class WarmPageCacheCommand extends Command
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $output->writeln('Refreshing dashboard cache...');
+        $dashboardStartedAt = microtime(true);
         $dashboard = $this->dashboardCache->refreshPayload();
+        $output->writeln(sprintf('Dashboard cache done in %.2fs.', microtime(true) - $dashboardStartedAt));
+
         $output->writeln('Refreshing page cache...');
+        $pageStartedAt = microtime(true);
         $pages = $this->pageCache->refresh();
+        $output->writeln(sprintf('Page cache done in %.2fs.', microtime(true) - $pageStartedAt));
 
         $output->writeln(sprintf(
             'Page cache refreshed at %s. Dashboard traffic: %d bytes. Devices: %d. Clients: %d.',

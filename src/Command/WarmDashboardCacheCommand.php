@@ -18,12 +18,15 @@ class WarmDashboardCacheCommand extends Command
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
+        $output->writeln('Refreshing dashboard cache...');
+        $startedAt = microtime(true);
         $payload = $this->dashboardCache->refreshPayload();
 
         $output->writeln(sprintf(
-            'Dashboard cache refreshed at %s. Traffic today: %d bytes.',
+            'Dashboard cache refreshed at %s. Traffic today: %d bytes. Took %.2fs.',
             $payload['generatedAt'] ?? '-',
-            (int) ($payload['todayTraffic'] ?? 0)
+            (int) ($payload['todayTraffic'] ?? 0),
+            microtime(true) - $startedAt
         ));
 
         return Command::SUCCESS;
