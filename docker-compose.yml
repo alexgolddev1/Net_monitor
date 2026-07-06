@@ -24,7 +24,8 @@ services:
     build:
       context: .
       dockerfile: docker/php/Dockerfile
-    command: php bin/console app:netflow:listen --host=0.0.0.0 --port=2055
+    user: www-data
+    command: env APP_ENV=prod APP_DEBUG=0 php bin/console app:netflow:listen --host=0.0.0.0 --port=2055
     env_file: .env
     volumes:
       - ./:/var/www/html

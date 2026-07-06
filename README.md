@@ -49,23 +49,23 @@ MIKROTIK_PASSWORD=secret
 ## Useful Commands
 
 ```bash
-docker compose exec php php bin/console app:sync-mikrotik-leases
-docker compose exec php php bin/console app:sync-mikrotik-dns-cache
-docker compose exec php php bin/console app:netflow:listen --host=0.0.0.0 --port=2055
-docker compose exec php php bin/console app:enrich-network-flows --limit=20000
-docker compose exec php php bin/console app:aggregate-flows
-docker compose exec php php bin/console app:cleanup-flows --days=90
+docker compose exec -u www-data php env APP_ENV=prod APP_DEBUG=0 php bin/console app:sync-mikrotik-leases
+docker compose exec -u www-data php env APP_ENV=prod APP_DEBUG=0 php bin/console app:sync-mikrotik-dns-cache
+docker compose exec -u www-data php env APP_ENV=prod APP_DEBUG=0 php bin/console app:netflow:listen --host=0.0.0.0 --port=2055
+docker compose exec -u www-data php env APP_ENV=prod APP_DEBUG=0 php bin/console app:enrich-network-flows --limit=20000
+docker compose exec -u www-data php env APP_ENV=prod APP_DEBUG=0 php bin/console app:aggregate-flows
+docker compose exec -u www-data php env APP_ENV=prod APP_DEBUG=0 php bin/console app:cleanup-flows --days=90
 ```
 
 ## Scheduler / Cron
 
 ```cron
-*/2 * * * * cd /path/to/project && docker compose exec -T php php bin/console app:sync-mikrotik-leases
-*/2 * * * * cd /path/to/project && docker compose exec -T php php bin/console app:sync-mikrotik-dns-cache
-*/5 * * * * cd /path/to/project && docker compose exec -T php php bin/console app:enrich-network-flows --limit=20000
-*/1 * * * * cd /path/to/project && docker compose exec -T php php bin/console app:netflow:listen --host=0.0.0.0 --port=2055
-0 * * * * cd /path/to/project && docker compose exec -T php php bin/console app:aggregate-flows
-30 2 * * * cd /path/to/project && docker compose exec -T php php bin/console app:cleanup-flows --days=90
+*/2 * * * * cd /path/to/project && docker compose exec -T -u www-data php env APP_ENV=prod APP_DEBUG=0 php bin/console app:sync-mikrotik-leases
+*/2 * * * * cd /path/to/project && docker compose exec -T -u www-data php env APP_ENV=prod APP_DEBUG=0 php bin/console app:sync-mikrotik-dns-cache
+*/5 * * * * cd /path/to/project && docker compose exec -T -u www-data php env APP_ENV=prod APP_DEBUG=0 php bin/console app:enrich-network-flows --limit=20000
+*/1 * * * * cd /path/to/project && docker compose exec -T -u www-data php env APP_ENV=prod APP_DEBUG=0 php bin/console app:netflow:listen --host=0.0.0.0 --port=2055
+0 * * * * cd /path/to/project && docker compose exec -T -u www-data php env APP_ENV=prod APP_DEBUG=0 php bin/console app:aggregate-flows
+30 2 * * * cd /path/to/project && docker compose exec -T -u www-data php env APP_ENV=prod APP_DEBUG=0 php bin/console app:cleanup-flows --days=90
 ```
 
 ## MikroTik Setup
