@@ -4,6 +4,7 @@ namespace App\Controller;
 
 use App\Entity\Client;
 use App\Entity\Device;
+use App\Service\DashboardCacheService;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\JsonResponse;
@@ -16,6 +17,7 @@ class ApiController extends AbstractController
 {
     public function __construct(
         private readonly EntityManagerInterface $em,
+        private readonly DashboardCacheService $dashboardCache,
     )
     {
     }
@@ -23,7 +25,7 @@ class ApiController extends AbstractController
     #[Route('/dashboard', methods: ['GET'], name: 'api_dashboard')]
     public function dashboard(): JsonResponse
     {
-        return $this->json($this->dashboardPayload());
+        return $this->json($this->dashboardCache->cachedPayload());
     }
 
     #[Route('/dashboard/stream', methods: ['GET'], name: 'api_dashboard_stream')]
@@ -134,7 +136,7 @@ class ApiController extends AbstractController
     private function emitDashboardEvent(): void
     {
         echo 'event: dashboard' . "\n";
-        echo 'data: '.json_encode($this->dashboardPayload(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . "\n\n";
+        echo 'data: '.json_encode($this->dashboardCache->cachedPayload(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . "\n\n";
     }
 
     private function report(\DateTimeImmutable $from): JsonResponse

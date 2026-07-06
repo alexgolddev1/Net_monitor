@@ -104,6 +104,17 @@ function formatBytes(bytes) {
 }
 
 function clearAndRender(tbody, rows) {
+  if (rows.length === 0) {
+    const columns = tbody.closest('table')?.querySelectorAll('thead th').length || 2;
+    const line = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.colSpan = columns;
+    cell.className = 'muted';
+    cell.textContent = 'Немає даних';
+    line.appendChild(cell);
+    tbody.replaceChildren(line);
+    return;
+  }
   tbody.replaceChildren(...rows);
 }
 
