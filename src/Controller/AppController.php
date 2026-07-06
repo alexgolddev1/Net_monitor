@@ -8,6 +8,7 @@ use App\Entity\DeviceDailyUsage;
 use App\Entity\DeviceIpHistory;
 use App\Entity\NetworkFlow;
 use App\Service\ApplicationLabelResolver;
+use App\Service\PageCacheService;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\Request;
@@ -20,6 +21,7 @@ class AppController extends AbstractController
     public function __construct(
         private readonly EntityManagerInterface $em,
         private readonly ApplicationLabelResolver $applicationLabelResolver,
+        private readonly PageCacheService $pageCache,
     )
     {
     }
@@ -42,7 +44,7 @@ class AppController extends AbstractController
         $hideLinked = $request->query->getBoolean('hide_linked');
 
         return $this->render('devices/index.html.twig', [
-            'devices' => $this->deviceRows($hideLinked),
+            'devices' => $this->pageCache->cachedDeviceRows($hideLinked),
             'clients' => $this->em->getRepository(Client::class)->findBy(['status' => 'active'], ['fullName' => 'ASC']),
             'hideLinked' => $hideLinked,
         ]);
@@ -91,7 +93,7 @@ class AppController extends AbstractController
     #[Route('/clients', name: 'clients')]
     public function clients(): Response
     {
-        return $this->render('clients/index.html.twig', ['clients' => $this->clientRows()]);
+        return $this->render('clients/index.html.twig', ['clients' => $this->pageCache->cachedClientRows()]);
     }
 
     #[Route('/clients', name: 'client_create', methods: ['POST'])]

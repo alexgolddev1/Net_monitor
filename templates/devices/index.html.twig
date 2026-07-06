@@ -17,7 +17,7 @@
             <td>{{ row.device.hostname }}</td>
             <td>{{ row.device.vendor }}</td>
             <td>{{ row.device.vlan }}</td>
-            <td>{% if row.device.client %}<a href="{{ path('client_show',{id:row.device.client.id}) }}">{{ row.device.client.displayName }}</a>{% else %}<span class="muted">не прив'язано</span>{% endif %}</td>
+            <td>{% if row.device.clientId %}<a href="{{ path('client_show',{id:row.device.clientId}) }}">{{ row.device.clientDisplayName }}</a>{% else %}<span class="muted">не прив'язано</span>{% endif %}</td>
             <td>{{ (row.today / 1048576)|number_format(1) }} МБ</td>
             <td>{{ (row.todayDownload / 1048576)|number_format(1) }} МБ</td>
             <td>{{ (row.todayUpload / 1048576)|number_format(1) }} МБ</td>
@@ -31,6 +31,8 @@
             <td>{{ row.device.lastSeenAt ? row.device.lastSeenAt|date('Y-m-d H:i') : '-' }}</td>
             <td><button type="button" onclick="document.getElementById('link-{{ row.device.id }}').showModal()">Прив'язати</button></td>
         </tr>
+    {% else %}
+        <tr><td colspan="12" class="muted">Немає даних</td></tr>
     {% endfor %}
 </table>
 {% for row in devices %}
@@ -38,7 +40,7 @@
     <h2>Прив'язати {{ row.device.mac }}</h2>
     <form method="post" action="{{ path('device_link_client',{id:row.device.id}) }}">
         <label>Існуючий клієнт</label>
-        <select name="client_id" data-client-select><option value="">Створити нового</option>{% for client in clients %}<option value="{{ client.id }}" {% if row.device.client and row.device.client.id == client.id %}selected{% endif %}>{{ client.displayName }}{% if client.roomNumber %}, {{ client.roomNumber }}{% endif %}</option>{% endfor %}</select>
+        <select name="client_id" data-client-select><option value="">Створити нового</option>{% for client in clients %}<option value="{{ client.id }}" {% if row.device.clientId and row.device.clientId == client.id %}selected{% endif %}>{{ client.displayName }}{% if client.roomNumber %}, {{ client.roomNumber }}{% endif %}</option>{% endfor %}</select>
         <div class="form-grid" data-new-client-fields>
             <div><label>ПІБ</label><input name="full_name"></div>
             <div><label>Кімната</label><input name="room_number"></div>
