@@ -24,32 +24,39 @@ class MikroTikClient
         $processedMacs = [];
 
         foreach ($leases as $lease) {
-            $mac = strtoupper((string) ($lease['mac'] ?? ''));
-            $ip = (string) ($lease['ip'] ?? '');
-            if (!$mac || !$ip) {
-                continue;
-            }
+            try {
+                $mac = strtoupper((string) ($lease['mac'] ?? ''));
+                $ip = (string) ($lease['ip'] ?? '');
+                if (!$mac || !$ip) {
+                    continue;
+                }
 
-            $status = strtolower((string) ($lease['status'] ?? ''));
-            $device = $processedMacs[$mac] ?? null;
+                $status = strtolower((string) ($lease['status'] ?? ''));
+                $device = $processedMacs[$mac] ?? null;
 
-            if ($device) {
-                $this->logger->warning('Duplicate MikroTik lease MAC encountered', [
-                    'mac' => $mac,
-                    'ip' => $ip,
-                    'status' => $status,
-                ]);
-                if ($status === 'bound') {
+                if ($device) {
+                    $this->logger->warning('Duplicate MikroTik lease MAC encountered', [
+                        'mac' => $mac,
+                        'ip' => $ip,
+                        'status' => $status,
+                    ]);
+                    if ($status === 'bound') {
+                        $this->applyLeaseData($device, $lease);
+                    }
+                } else {
+                    $device = $this->resolver->resolve($mac, $ip);
+                    $processedMacs[$mac] = $device;
                     $this->applyLeaseData($device, $lease);
                 }
-            } else {
-                $device = $this->resolver->resolve($mac, $ip);
-                $processedMacs[$mac] = $device;
-                $this->applyLeaseData($device, $lease);
-            }
 
-            $this->resolver->recordIp($device, $ip);
-            ++$count;
+                $this->resolver->recordIp($device, $ip);
+                ++$count;
+            } catch (\Throwable $e) {
+                $this->logger->warning('Skipping bad MikroTik lease row', [
+                    'lease' => $lease,
+                    'error' => $e->getMessage(),
+                ]);
+            }
         }
 
         $this->em->flush();
@@ -194,11 +201,11 @@ class MikroTikClient
             '_id' => $row['.id'] ?? null,
             'mac' => strtoupper((string) $mac),
             'ip' => (string) $ip,
-            'hostname' => $row['host-name'] ?? null,
-            'vlan' => $row['server'] ?? null,
-            'status' => $row['status'] ?? null,
+            'hostname' => $this->normalizeUtf8Text($row['host-name'] ?? null),
+            'vlan' => $this->normalizeUtf8Text($row['server'] ?? null),
+            'status' => $this->normalizeUtf8Text($row['status'] ?? null),
             'dynamic' => isset($row['dynamic']) ? filter_var($row['dynamic'], FILTER_VALIDATE_BOOL, FILTER_NULL_ON_FAILURE) : null,
-            'comment' => $row['comment'] ?? null,
+            'comment' => $this->normalizeUtf8Text($row['comment'] ?? null),
             'vendor' => null,
         ];
     }
@@ -522,8 +529,51 @@ class MikroTikClient
             return null;
         }
 
+        $value = $this->normalizeUtf8Text($value);
+        if ($value === null) {
+            return null;
+        }
+
         $value = strtolower(trim($value));
         $value = rtrim($value, '.');
+
+        return $value === '' ? null : $value;
+    }
+
+    private function normalizeUtf8Text(mixed $value): ?string
+    {
+        if (!is_string($value)) {
+            return null;
+        }
+
+        $value = trim($value);
+        if ($value === '') {
+            return null;
+        }
+
+        if (preg_match('//u', $value) !== 1) {
+            $converted = @iconv('Windows-1251', 'UTF-8//IGNORE', $value);
+            if (is_string($converted) && $converted !== '') {
+                $value = $converted;
+            } else {
+                $converted = @iconv('UTF-8', 'UTF-8//IGNORE', $value);
+                $value = is_string($converted) ? $converted : '';
+            }
+        }
+
+        $value = preg_replace('/[^\P{C}\t\r\n]+/u', '', $value);
+        if (!is_string($value)) {
+            return null;
+        }
+
+        $value = trim($value);
+
+        if (function_exists('iconv_substr')) {
+            $truncated = iconv_substr($value, 0, 180, 'UTF-8');
+            if (is_string($truncated)) {
+                $value = $truncated;
+            }
+        }
 
         return $value === '' ? null : $value;
     }
