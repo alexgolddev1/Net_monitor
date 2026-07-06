@@ -57,9 +57,203 @@ class TrafficAggregator
                 ->setTopDestinationsJson($this->topDestinationsFromFlows($device, $start, $end));
         }
 
+        $this->connection->executeStatement(
+            'INSERT INTO traffic_daily_direction_usage (date, direction, bytes)
+             SELECT DATE(received_at) usageDate,
+                    direction,
+                    SUM(COALESCE(bytes, 0)) bytes
+             FROM network_flow
+             WHERE device_id IS NOT NULL AND received_at BETWEEN :start AND :end
+             GROUP BY DATE(received_at), direction
+             ON DUPLICATE KEY UPDATE bytes = VALUES(bytes)',
+            [
+                'start' => $start->format('Y-m-d H:i:s'),
+                'end' => $end->format('Y-m-d H:i:s'),
+            ]
+        );
+
         $this->em->flush();
 
         return count($rows);
+    }
+
+    public function aggregateIncremental(int $batchSize = 50000): int
+    {
+        $batchSize = max(1, $batchSize);
+        $processed = 0;
+        $lastFlowId = $this->aggregationStateLastFlowId();
+        $maxFlowId = (int) $this->connection->fetchOne('SELECT COALESCE(MAX(id), 0) FROM network_flow');
+
+        while ($lastFlowId < $maxFlowId) {
+            $toFlowId = min($lastFlowId + $batchSize, $maxFlowId);
+            $processed += $this->aggregateFlowRange($lastFlowId, $toFlowId);
+            $lastFlowId = $toFlowId;
+            $this->setAggregationStateLastFlowId($lastFlowId);
+        }
+
+        return $processed;
+    }
+
+    private function aggregateFlowRange(int $fromFlowId, int $toFlowId): int
+    {
+        if ($toFlowId <= $fromFlowId) {
+            return 0;
+        }
+
+        $params = [
+            'fromId' => $fromFlowId,
+            'toId' => $toFlowId,
+            'download' => 'download',
+            'upload' => 'upload',
+        ];
+
+        $processed = (int) $this->connection->fetchOne(
+            'SELECT COUNT(*) FROM network_flow WHERE id > :fromId AND id <= :toId',
+            ['fromId' => $fromFlowId, 'toId' => $toFlowId]
+        );
+
+        $this->connection->executeStatement(
+            'INSERT INTO device_daily_usage (device_id, date, bytes_in, bytes_out, total_bytes)
+             SELECT resolved.deviceId,
+                    resolved.usageDate,
+                    SUM(CASE WHEN resolved.direction = :download THEN COALESCE(resolved.bytes, 0) ELSE 0 END) bytesIn,
+                    SUM(CASE WHEN resolved.direction = :upload THEN COALESCE(resolved.bytes, 0) ELSE 0 END) bytesOut,
+                    SUM(COALESCE(resolved.bytes, 0)) totalBytes
+             FROM (
+                 SELECT COALESCE(f.device_id, d.id) deviceId,
+                        DATE(f.received_at) usageDate,
+                        f.direction,
+                        f.bytes
+                 FROM network_flow f
+                 LEFT JOIN device d ON f.device_id IS NULL AND (
+                     (f.direction = :upload AND d.current_ip = f.src_ip)
+                     OR (f.direction = :download AND d.current_ip = COALESCE(f.post_nat_dst_ip, f.dst_ip))
+                 )
+                 WHERE f.id > :fromId
+                   AND f.id <= :toId
+             ) resolved
+             WHERE resolved.deviceId IS NOT NULL
+             GROUP BY resolved.deviceId, resolved.usageDate
+             ON DUPLICATE KEY UPDATE
+                bytes_in = bytes_in + VALUES(bytes_in),
+                bytes_out = bytes_out + VALUES(bytes_out),
+                total_bytes = total_bytes + VALUES(total_bytes)',
+            $params
+        );
+
+        $this->connection->executeStatement(
+            'INSERT INTO device_daily_app_usage (device_id, date, app_name, bytes)
+             SELECT resolved.deviceId,
+                    resolved.usageDate,
+                    resolved.appName,
+                    SUM(COALESCE(resolved.bytes, 0)) bytes
+             FROM (
+                 SELECT COALESCE(f.device_id, d.id) deviceId,
+                        DATE(f.received_at) usageDate,
+                        CASE
+                            WHEN f.app_name IS NULL THEN NULL
+                            WHEN LOWER(TRIM(f.app_name)) = \'unknown\' THEN NULL
+                            WHEN TRIM(f.app_name) = \'\' THEN NULL
+                            ELSE TRIM(f.app_name)
+                        END appName,
+                        f.bytes
+                 FROM network_flow f
+                 LEFT JOIN device d ON f.device_id IS NULL AND (
+                     (f.direction = :upload AND d.current_ip = f.src_ip)
+                     OR (f.direction = :download AND d.current_ip = COALESCE(f.post_nat_dst_ip, f.dst_ip))
+                 )
+                 WHERE f.id > :fromId
+                   AND f.id <= :toId
+             ) resolved
+             WHERE resolved.deviceId IS NOT NULL
+               AND resolved.appName IS NOT NULL
+             GROUP BY resolved.deviceId, resolved.usageDate, resolved.appName
+             ON DUPLICATE KEY UPDATE
+                bytes = bytes + VALUES(bytes)',
+            $params
+        );
+
+        $this->connection->executeStatement(
+            'INSERT INTO device_daily_domain_usage (device_id, date, domain, last_seen_at, bytes)
+             SELECT resolved.deviceId,
+                    resolved.usageDate,
+                    resolved.domain,
+                    MAX(resolved.receivedAt) lastSeenAt,
+                    SUM(COALESCE(resolved.bytes, 0)) bytes
+             FROM (
+                 SELECT COALESCE(f.device_id, d.id) deviceId,
+                        DATE(f.received_at) usageDate,
+                        CASE
+                            WHEN f.domain IS NULL THEN NULL
+                            WHEN TRIM(f.domain) = \'\' THEN NULL
+                            WHEN LOWER(TRIM(f.domain)) = \'unknown\' THEN NULL
+                            ELSE LOWER(TRIM(f.domain))
+                        END domain,
+                        f.received_at receivedAt,
+                        f.bytes
+                 FROM network_flow f
+                 LEFT JOIN device d ON f.device_id IS NULL AND (
+                     (f.direction = :upload AND d.current_ip = f.src_ip)
+                     OR (f.direction = :download AND d.current_ip = COALESCE(f.post_nat_dst_ip, f.dst_ip))
+                 )
+                 WHERE f.id > :fromId
+                   AND f.id <= :toId
+             ) resolved
+             WHERE resolved.deviceId IS NOT NULL
+               AND resolved.domain IS NOT NULL
+             GROUP BY resolved.deviceId, resolved.usageDate, resolved.domain
+             ON DUPLICATE KEY UPDATE
+                bytes = bytes + VALUES(bytes),
+                last_seen_at = GREATEST(last_seen_at, VALUES(last_seen_at))',
+            $params
+        );
+
+        $this->connection->executeStatement(
+            'INSERT INTO traffic_daily_direction_usage (date, direction, bytes)
+             SELECT resolved.usageDate,
+                    resolved.direction,
+                    SUM(COALESCE(resolved.bytes, 0)) bytes
+             FROM (
+                 SELECT DATE(f.received_at) usageDate,
+                        f.direction,
+                        f.bytes
+                 FROM network_flow f
+                 WHERE f.id > :fromId
+                   AND f.id <= :toId
+             ) resolved
+             GROUP BY resolved.usageDate, resolved.direction
+             ON DUPLICATE KEY UPDATE
+                bytes = bytes + VALUES(bytes)',
+            $params
+        );
+
+        return $processed;
+    }
+
+    private function aggregationStateLastFlowId(): int
+    {
+        $lastFlowId = $this->connection->fetchOne(
+            'SELECT last_flow_id FROM traffic_aggregation_state WHERE id = 1'
+        );
+
+        if ($lastFlowId === false || $lastFlowId === null) {
+            $this->connection->executeStatement(
+                'INSERT INTO traffic_aggregation_state (id, last_flow_id, updated_at) VALUES (1, 0, NOW())
+                 ON DUPLICATE KEY UPDATE last_flow_id = last_flow_id, updated_at = updated_at'
+            );
+
+            return 0;
+        }
+
+        return (int) $lastFlowId;
+    }
+
+    private function setAggregationStateLastFlowId(int $lastFlowId): void
+    {
+        $this->connection->executeStatement(
+            'UPDATE traffic_aggregation_state SET last_flow_id = :lastFlowId, updated_at = NOW() WHERE id = 1',
+            ['lastFlowId' => $lastFlowId]
+        );
     }
 
     public function totalsForDevice(Device $device, int $days): int

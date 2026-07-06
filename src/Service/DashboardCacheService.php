@@ -42,18 +42,18 @@ class DashboardCacheService
 
     private function buildPayload(): array
     {
-        $todayRange = $this->todayRangeParameters();
+        $today = $this->todayDateParameter();
 
         return [
             'clients' => $this->em->getRepository(Client::class)->count(['status' => 'active']),
             'devices' => $this->em->getRepository(Device::class)->count([]),
             'unlinkedDevices' => (int) $this->em->createQuery('SELECT COUNT(d.id) FROM App\Entity\Device d WHERE d.client IS NULL')->getSingleScalarResult(),
-            'todayTraffic' => $this->todayTrafficFromFlows($todayRange),
-            'todayTrafficBreakdown' => $this->todayTrafficBreakdownFromFlows($todayRange),
-            'topDevices' => $this->topDeviceRowsFromFlows($todayRange),
-            'topClients' => $this->topClientRowsFromFlows($todayRange),
-            'topApps' => $this->topAppsFromFlows($todayRange),
-            'topDomains' => $this->topDestinationsFromFlows($todayRange),
+            'todayTraffic' => $this->todayTrafficFromRollups($today),
+            'todayTrafficBreakdown' => $this->todayTrafficBreakdownFromRollups($today),
+            'topDevices' => $this->topDeviceRowsFromRollups($today),
+            'topClients' => $this->topClientRowsFromRollups($today),
+            'topApps' => $this->topAppsFromRollups($today),
+            'topDomains' => $this->topDestinationsFromRollups($today),
             'latestDevices' => $this->latestDevices(),
             'generatedAt' => (new \DateTimeImmutable())->format(DATE_ATOM),
         ];
@@ -131,15 +131,15 @@ class DashboardCacheService
         return $modifiedAt !== false ? time() - $modifiedAt : null;
     }
 
-    private function todayTrafficFromFlows(array $todayRange): int
+    private function todayTrafficFromRollups(string $today): int
     {
         return (int) $this->em->getConnection()->fetchOne(
-            'SELECT COALESCE(SUM(bytes), 0) FROM network_flow WHERE received_at >= :start AND received_at < :end',
-            $todayRange
+            'SELECT COALESCE(SUM(total_bytes), 0) FROM device_daily_usage WHERE date = :today',
+            ['today' => $today]
         );
     }
 
-    private function todayTrafficBreakdownFromFlows(array $todayRange): array
+    private function todayTrafficBreakdownFromRollups(string $today): array
     {
         $row = $this->em->getConnection()->fetchAssociative(
             'SELECT
@@ -147,14 +147,15 @@ class DashboardCacheService
                 COALESCE(SUM(CASE WHEN direction = :upload THEN bytes ELSE 0 END), 0) uploadBytes,
                 COALESCE(SUM(CASE WHEN direction = :local THEN bytes ELSE 0 END), 0) localBytes,
                 COALESCE(SUM(CASE WHEN direction = :external THEN bytes ELSE 0 END), 0) externalBytes
-             FROM network_flow
-             WHERE received_at >= :start AND received_at < :end',
+             FROM traffic_daily_direction_usage
+             WHERE date = :today',
             [
+                'today' => $today,
                 'download' => 'download',
                 'upload' => 'upload',
                 'local' => 'local',
                 'external' => 'external',
-            ] + $todayRange
+            ]
         );
 
         return [
@@ -165,23 +166,23 @@ class DashboardCacheService
         ];
     }
 
-    private function topDeviceRowsFromFlows(array $todayRange): array
+    private function topDeviceRowsFromRollups(string $today): array
     {
         $rows = $this->em->getConnection()->fetchAllAssociative(
             'SELECT
                 d.id,
                 d.mac,
                 d.current_ip currentIp,
-                COALESCE(SUM(f.bytes), 0) totalBytes,
-                COALESCE(SUM(CASE WHEN f.direction = :download THEN f.bytes ELSE 0 END), 0) downloadBytes,
-                COALESCE(SUM(CASE WHEN f.direction = :upload THEN f.bytes ELSE 0 END), 0) uploadBytes
-             FROM network_flow f
-             INNER JOIN device d ON d.id = f.device_id
-             WHERE f.received_at >= :start AND f.received_at < :end
+                COALESCE(SUM(u.total_bytes), 0) totalBytes,
+                COALESCE(SUM(u.bytes_in), 0) downloadBytes,
+                COALESCE(SUM(u.bytes_out), 0) uploadBytes
+             FROM device_daily_usage u
+             INNER JOIN device d ON d.id = u.device_id
+             WHERE u.date = :today
              GROUP BY d.id, d.mac, d.current_ip
              ORDER BY totalBytes DESC
              LIMIT 10',
-            ['download' => 'download', 'upload' => 'upload'] + $todayRange
+            ['today' => $today]
         );
 
         return array_map(fn (array $row): array => [
@@ -194,23 +195,24 @@ class DashboardCacheService
         ], $rows);
     }
 
-    private function topClientRowsFromFlows(array $todayRange): array
+    private function topClientRowsFromRollups(string $today): array
     {
         $rows = $this->em->getConnection()->fetchAllAssociative(
             'SELECT
                 c.id,
                 c.full_name fullName,
                 c.room_number roomNumber,
-                COALESCE(SUM(f.bytes), 0) totalBytes,
-                COALESCE(SUM(CASE WHEN f.direction = :download THEN f.bytes ELSE 0 END), 0) downloadBytes,
-                COALESCE(SUM(CASE WHEN f.direction = :upload THEN f.bytes ELSE 0 END), 0) uploadBytes
-             FROM network_flow f
-             INNER JOIN client c ON c.id = f.client_id
-             WHERE f.received_at >= :start AND f.received_at < :end
+                COALESCE(SUM(u.total_bytes), 0) totalBytes,
+                COALESCE(SUM(u.bytes_in), 0) downloadBytes,
+                COALESCE(SUM(u.bytes_out), 0) uploadBytes
+             FROM device_daily_usage u
+             INNER JOIN device d ON d.id = u.device_id
+             INNER JOIN client c ON c.id = d.client_id
+             WHERE u.date = :today
              GROUP BY c.id, c.full_name, c.room_number
              ORDER BY totalBytes DESC
              LIMIT 10',
-            ['download' => 'download', 'upload' => 'upload'] + $todayRange
+            ['today' => $today]
         );
 
         return array_map(fn (array $row): array => [
@@ -224,26 +226,18 @@ class DashboardCacheService
         ], $rows);
     }
 
-    private function topAppsFromFlows(array $todayRange): array
+    private function topAppsFromRollups(string $today): array
     {
         $rows = $this->em->getConnection()->fetchAllAssociative(
             'SELECT
-                appName,
+                app_name appName,
                 COALESCE(SUM(bytes), 0) totalBytes
-             FROM (
-                 SELECT app_name appName, bytes
-                 FROM network_flow
-                 WHERE received_at >= :start AND received_at < :end
-                   AND app_name IS NOT NULL
-                   AND app_name <> \'unknown\'
-                   AND app_name <> \'Unknown\'
-                 ORDER BY received_at DESC
-                 LIMIT 50000
-             ) recent_flows
+             FROM device_daily_app_usage
+             WHERE date = :today
              GROUP BY appName
              ORDER BY totalBytes DESC
              LIMIT 10',
-            $todayRange
+            ['today' => $today]
         );
 
         $apps = [];
@@ -255,27 +249,18 @@ class DashboardCacheService
         return $apps;
     }
 
-    private function topDestinationsFromFlows(array $todayRange): array
+    private function topDestinationsFromRollups(string $today): array
     {
         $rows = $this->em->getConnection()->fetchAllAssociative(
             'SELECT
                 domain,
                 COALESCE(SUM(bytes), 0) totalBytes
-             FROM (
-                 SELECT domain, bytes
-                 FROM network_flow
-                 WHERE received_at >= :start AND received_at < :end
-                   AND domain IS NOT NULL
-                   AND domain <> \'\'
-                   AND domain <> \'unknown\'
-                   AND domain <> \'Unknown\'
-                 ORDER BY received_at DESC
-                 LIMIT 50000
-             ) recent_flows
+             FROM device_daily_domain_usage
+             WHERE date = :today
              GROUP BY domain
              ORDER BY totalBytes DESC
              LIMIT 10',
-            $todayRange
+            ['today' => $today]
         );
 
         $destinations = [];
@@ -316,13 +301,8 @@ class DashboardCacheService
         return $appName === '' || is_numeric($appName) ? 'Unknown' : $appName;
     }
 
-    private function todayRangeParameters(): array
+    private function todayDateParameter(): string
     {
-        $today = new \DateTimeImmutable('today');
-
-        return [
-            'start' => $today->setTime(0, 0)->format('Y-m-d H:i:s'),
-            'end' => $today->modify('+1 day')->setTime(0, 0)->format('Y-m-d H:i:s'),
-        ];
+        return (new \DateTimeImmutable('today'))->format('Y-m-d');
     }
 }

@@ -4,6 +4,7 @@ namespace App\Command;
 
 use App\Service\DashboardCacheService;
 use App\Service\PageCacheService;
+use App\Service\TrafficAggregator;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
@@ -15,12 +16,17 @@ class WarmPageCacheCommand extends Command
     public function __construct(
         private readonly DashboardCacheService $dashboardCache,
         private readonly PageCacheService $pageCache,
+        private readonly TrafficAggregator $trafficAggregator,
     ) {
         parent::__construct();
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
+        $output->writeln('Syncing rollups...');
+        $synced = $this->trafficAggregator->aggregateIncremental();
+        $output->writeln(sprintf('Rollups synced from %d flow rows.', $synced));
+
         $output->writeln('Refreshing dashboard cache...');
         $dashboardStartedAt = microtime(true);
         $dashboard = $this->dashboardCache->refreshPayload();

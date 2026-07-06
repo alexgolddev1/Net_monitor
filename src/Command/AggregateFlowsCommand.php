@@ -18,9 +18,9 @@ class AggregateFlowsCommand extends Command
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
-        $count = $this->trafficAggregator->aggregateDaily();
+        $count = $this->trafficAggregator->aggregateIncremental();
 
-        $output->writeln(sprintf('Aggregated %d device daily rows from network_flow.', $count));
+        $output->writeln(sprintf('Incrementally aggregated %d flow rows into rollups.', $count));
         $output->writeln(sprintf('Traffic today: %d bytes', $this->trafficAggregator->trafficTodayFromFlows()));
 
         $output->writeln('Top devices:');

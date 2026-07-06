@@ -3,6 +3,7 @@
 namespace App\Service;
 
 use App\Entity\Client;
+use App\Entity\NetworkFlow;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Component\HttpKernel\KernelInterface;
 
@@ -394,14 +395,14 @@ class PageCacheService
         $rows = $this->em->getConnection()->fetchAllAssociative(
             'SELECT
                 device_id deviceId,
-                COALESCE(SUM(bytes), 0) totalBytes,
-                COALESCE(SUM(CASE WHEN direction = :download THEN bytes ELSE 0 END), 0) downloadBytes,
-                COALESCE(SUM(CASE WHEN direction = :upload THEN bytes ELSE 0 END), 0) uploadBytes
-             FROM network_flow
+                COALESCE(SUM(total_bytes), 0) totalBytes,
+                COALESCE(SUM(bytes_in), 0) downloadBytes,
+                COALESCE(SUM(bytes_out), 0) uploadBytes
+             FROM device_daily_usage
              WHERE device_id IS NOT NULL
-               AND received_at BETWEEN :start AND :end
+               AND date BETWEEN :start AND :end
              GROUP BY device_id',
-            ['download' => 'download', 'upload' => 'upload'] + $this->trafficRangeParameters($days)
+            $this->trafficDateRangeParameters($days)
         );
 
         $stats = [];
@@ -419,12 +420,12 @@ class PageCacheService
     private function usageTotalsByDeviceFromFlows(int $days): array
     {
         $rows = $this->em->getConnection()->fetchAllAssociative(
-            'SELECT device_id deviceId, COALESCE(SUM(bytes), 0) totalBytes
-             FROM network_flow
+            'SELECT device_id deviceId, COALESCE(SUM(total_bytes), 0) totalBytes
+             FROM device_daily_usage
              WHERE device_id IS NOT NULL
-               AND received_at BETWEEN :start AND :end
+               AND date BETWEEN :start AND :end
              GROUP BY device_id',
-            $this->trafficRangeParameters($days)
+            $this->trafficDateRangeParameters($days)
         );
 
         $totals = [];
@@ -441,18 +442,12 @@ class PageCacheService
             'SELECT deviceId, domain, COALESCE(SUM(bytes), 0) totalBytes
              FROM (
                  SELECT device_id deviceId, domain, bytes
-                 FROM network_flow
-                 WHERE device_id IS NOT NULL
-                   AND received_at BETWEEN :start AND :end
-                   AND domain IS NOT NULL
-                   AND TRIM(domain) <> \'\'
-                   AND LOWER(TRIM(domain)) <> \'unknown\'
-                 ORDER BY received_at DESC
-                 LIMIT 50000
+                 FROM device_daily_domain_usage
+                 WHERE date = :today
              ) recent_flows
              GROUP BY deviceId, domain
              ORDER BY deviceId ASC, totalBytes DESC',
-            $this->trafficRangeParameters(1)
+            ['today' => $this->todayDateParameter()]
         );
 
         $domainsByDevice = [];
@@ -502,19 +497,13 @@ class PageCacheService
         $rows = $this->em->getConnection()->fetchAllAssociative(
             'SELECT deviceId, domain, MAX(receivedAt) lastSeenAt, COALESCE(SUM(bytes), 0) totalBytes
              FROM (
-                 SELECT device_id deviceId, domain, received_at receivedAt, bytes
-                 FROM network_flow
-                 WHERE device_id IS NOT NULL
-                   AND received_at >= :from
-                   AND domain IS NOT NULL
-                   AND TRIM(domain) <> \'\'
-                   AND LOWER(TRIM(domain)) <> \'unknown\'
-                 ORDER BY received_at DESC
-                 LIMIT 20000
+                 SELECT device_id deviceId, domain, last_seen_at receivedAt, bytes
+                 FROM device_daily_domain_usage
+                 WHERE date >= :from
              ) recent_flows
              GROUP BY deviceId, domain
              ORDER BY deviceId ASC, lastSeenAt DESC',
-            ['from' => (new \DateTimeImmutable('-30 days'))->format('Y-m-d H:i:s')]
+            ['from' => (new \DateTimeImmutable('-30 days'))->format('Y-m-d')]
         );
 
         $domainsByDevice = [];
@@ -540,17 +529,12 @@ class PageCacheService
             'SELECT deviceId, appName, COALESCE(SUM(bytes), 0) totalBytes
              FROM (
                  SELECT device_id deviceId, app_name appName, bytes
-                 FROM network_flow
-                 WHERE device_id IS NOT NULL
-                   AND received_at BETWEEN :start AND :end
-                   AND app_name IS NOT NULL
-                   AND LOWER(app_name) <> \'unknown\'
-                 ORDER BY received_at DESC
-                 LIMIT 50000
+                 FROM device_daily_app_usage
+                 WHERE date = :today
              ) recent_flows
              GROUP BY deviceId, appName
              ORDER BY deviceId ASC, totalBytes DESC',
-            $this->trafficRangeParameters(1)
+            ['today' => $this->todayDateParameter()]
         );
 
         $appsByDevice = [];
@@ -682,6 +666,22 @@ class PageCacheService
             'start' => $start->format('Y-m-d H:i:s'),
             'end' => $today->setTime(23, 59, 59)->format('Y-m-d H:i:s'),
         ];
+    }
+
+    private function trafficDateRangeParameters(int $days): array
+    {
+        $today = new \DateTimeImmutable('today');
+        $start = $today->modify('-'.max(0, $days - 1).' days')->format('Y-m-d');
+
+        return [
+            'start' => $start,
+            'end' => $today->format('Y-m-d'),
+        ];
+    }
+
+    private function todayDateParameter(): string
+    {
+        return (new \DateTimeImmutable('today'))->format('Y-m-d');
     }
 
     private function readCache(string $name): ?array

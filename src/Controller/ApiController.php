@@ -98,16 +98,18 @@ class ApiController extends AbstractController
 
     private function dashboardPayload(): array
     {
+        $today = $this->todayDateParameter();
+
         return [
             'clients' => $this->em->getRepository(Client::class)->count(['status' => 'active']),
             'devices' => $this->em->getRepository(Device::class)->count([]),
             'unlinkedDevices' => (int) $this->em->createQuery('SELECT COUNT(d.id) FROM App\Entity\Device d WHERE d.client IS NULL')->getSingleScalarResult(),
-            'todayTraffic' => $this->todayTrafficFromFlows(),
-            'todayTrafficBreakdown' => $this->todayTrafficBreakdownFromFlows(),
-            'topDevices' => $this->topDeviceRowsFromFlows(),
-            'topClients' => $this->topClientRowsFromFlows(),
-            'topApps' => $this->topAppsFromFlows(),
-            'topDomains' => $this->topDestinationsFromFlows(),
+            'todayTraffic' => $this->todayTrafficFromRollups($today),
+            'todayTrafficBreakdown' => $this->todayTrafficBreakdownFromRollups($today),
+            'topDevices' => $this->topDeviceRowsFromRollups($today),
+            'topClients' => $this->topClientRowsFromRollups($today),
+            'topApps' => $this->topAppsFromRollups($today),
+            'topDomains' => $this->topDestinationsFromRollups($today),
             'latestDevices' => $this->latestDevices(),
             'generatedAt' => (new \DateTimeImmutable())->format(DATE_ATOM),
         ];
@@ -147,15 +149,15 @@ class ApiController extends AbstractController
         ];
     }
 
-    private function todayTrafficFromFlows(): int
+    private function todayTrafficFromRollups(string $today): int
     {
         return (int) $this->em->getConnection()->fetchOne(
-            'SELECT COALESCE(SUM(bytes), 0) FROM network_flow WHERE received_at BETWEEN :start AND :end',
-            $this->todayRangeParameters()
+            'SELECT COALESCE(SUM(total_bytes), 0) FROM device_daily_usage WHERE date = :today',
+            ['today' => $today]
         );
     }
 
-    private function todayTrafficBreakdownFromFlows(): array
+    private function todayTrafficBreakdownFromRollups(string $today): array
     {
         $row = $this->em->getConnection()->fetchAssociative(
             'SELECT
@@ -163,14 +165,15 @@ class ApiController extends AbstractController
                 COALESCE(SUM(CASE WHEN direction = :upload THEN bytes ELSE 0 END), 0) uploadBytes,
                 COALESCE(SUM(CASE WHEN direction = :local THEN bytes ELSE 0 END), 0) localBytes,
                 COALESCE(SUM(CASE WHEN direction = :external THEN bytes ELSE 0 END), 0) externalBytes
-             FROM network_flow
-             WHERE received_at BETWEEN :start AND :end',
+             FROM traffic_daily_direction_usage
+             WHERE date = :today',
             [
+                'today' => $today,
                 'download' => 'download',
                 'upload' => 'upload',
                 'local' => 'local',
                 'external' => 'external',
-            ] + $this->todayRangeParameters()
+            ]
         );
 
         return [
@@ -181,21 +184,23 @@ class ApiController extends AbstractController
         ];
     }
 
-    private function topDeviceRowsFromFlows(): array
+    private function topDeviceRowsFromRollups(string $today): array
     {
         $rows = $this->em->getConnection()->fetchAllAssociative(
             'SELECT
                 d.id,
-                COALESCE(SUM(f.bytes), 0) totalBytes,
-                COALESCE(SUM(CASE WHEN f.direction = :download THEN f.bytes ELSE 0 END), 0) downloadBytes,
-                COALESCE(SUM(CASE WHEN f.direction = :upload THEN f.bytes ELSE 0 END), 0) uploadBytes
-             FROM network_flow f
+                d.mac,
+                d.current_ip currentIp,
+                COALESCE(SUM(f.total_bytes), 0) totalBytes,
+                COALESCE(SUM(f.bytes_in), 0) downloadBytes,
+                COALESCE(SUM(f.bytes_out), 0) uploadBytes
+             FROM device_daily_usage f
              INNER JOIN device d ON d.id = f.device_id
-             WHERE f.received_at BETWEEN :start AND :end
-             GROUP BY d.id
+             WHERE f.date = :today
+             GROUP BY d.id, d.mac, d.current_ip
              ORDER BY totalBytes DESC
              LIMIT 10',
-            ['download' => 'download', 'upload' => 'upload'] + $this->todayRangeParameters()
+            ['today' => $today]
         );
 
         $payload = [];
@@ -218,21 +223,24 @@ class ApiController extends AbstractController
         return $payload;
     }
 
-    private function topClientRowsFromFlows(): array
+    private function topClientRowsFromRollups(string $today): array
     {
         $rows = $this->em->getConnection()->fetchAllAssociative(
             'SELECT
                 c.id,
-                COALESCE(SUM(f.bytes), 0) totalBytes,
-                COALESCE(SUM(CASE WHEN f.direction = :download THEN f.bytes ELSE 0 END), 0) downloadBytes,
-                COALESCE(SUM(CASE WHEN f.direction = :upload THEN f.bytes ELSE 0 END), 0) uploadBytes
-             FROM network_flow f
-             INNER JOIN client c ON c.id = f.client_id
-             WHERE f.received_at BETWEEN :start AND :end
-             GROUP BY c.id
+                c.full_name fullName,
+                c.room_number roomNumber,
+                COALESCE(SUM(f.total_bytes), 0) totalBytes,
+                COALESCE(SUM(f.bytes_in), 0) downloadBytes,
+                COALESCE(SUM(f.bytes_out), 0) uploadBytes
+             FROM device_daily_usage f
+             INNER JOIN device d ON d.id = f.device_id
+             INNER JOIN client c ON c.id = d.client_id
+             WHERE f.date = :today
+             GROUP BY c.id, c.full_name, c.room_number
              ORDER BY totalBytes DESC
              LIMIT 10',
-            ['download' => 'download', 'upload' => 'upload'] + $this->todayRangeParameters()
+            ['today' => $today]
         );
 
         $payload = [];
@@ -256,20 +264,18 @@ class ApiController extends AbstractController
         return $payload;
     }
 
-    private function topAppsFromFlows(): array
+    private function topAppsFromRollups(string $today): array
     {
         $rows = $this->em->getConnection()->fetchAllAssociative(
             'SELECT
                 app_name appName,
                 COALESCE(SUM(bytes), 0) totalBytes
-             FROM network_flow
-             WHERE received_at BETWEEN :start AND :end
-               AND app_name IS NOT NULL
-               AND LOWER(app_name) <> \'unknown\'
+             FROM device_daily_app_usage
+             WHERE date = :today
              GROUP BY appName
              ORDER BY totalBytes DESC
              LIMIT 10',
-            $this->todayRangeParameters()
+            ['today' => $today]
         );
 
         $apps = [];
@@ -278,34 +284,21 @@ class ApiController extends AbstractController
             $apps[$label] = ($apps[$label] ?? 0) + (int) $row['totalBytes'];
         }
 
-        if ($apps === []) {
-            $unknown = (int) $this->em->getConnection()->fetchOne(
-                'SELECT COALESCE(SUM(bytes), 0) FROM network_flow WHERE received_at BETWEEN :start AND :end AND (app_name IS NULL OR LOWER(app_name) = \'unknown\')',
-                $this->todayRangeParameters()
-            );
-            if ($unknown > 0) {
-                $apps['Unknown'] = $unknown;
-            }
-        }
-
         return $apps;
     }
 
-    private function topDestinationsFromFlows(): array
+    private function topDestinationsFromRollups(string $today): array
     {
         $rows = $this->em->getConnection()->fetchAllAssociative(
             'SELECT
                 domain,
                 COALESCE(SUM(bytes), 0) totalBytes
-             FROM network_flow
-             WHERE received_at BETWEEN :start AND :end
-               AND domain IS NOT NULL
-               AND TRIM(domain) <> \'\'
-               AND LOWER(TRIM(domain)) <> \'unknown\'
+             FROM device_daily_domain_usage
+             WHERE date = :today
              GROUP BY domain
              ORDER BY totalBytes DESC
              LIMIT 10',
-            $this->todayRangeParameters()
+            ['today' => $today]
         );
 
         $destinations = [];
@@ -354,5 +347,10 @@ class ApiController extends AbstractController
             'start' => $today->setTime(0, 0)->format('Y-m-d H:i:s'),
             'end' => $today->setTime(23, 59, 59)->format('Y-m-d H:i:s'),
         ];
+    }
+
+    private function todayDateParameter(): string
+    {
+        return (new \DateTimeImmutable('today'))->format('Y-m-d');
     }
 }
