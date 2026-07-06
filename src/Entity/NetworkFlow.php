@@ -10,6 +10,8 @@ use Doctrine\ORM\Mapping as ORM;
 #[ORM\Index(columns: ['first_seen_at'], name: 'idx_network_flow_first_seen_at')]
 #[ORM\Index(columns: ['device_id', 'received_at'], name: 'idx_network_flow_device_received')]
 #[ORM\Index(columns: ['client_id', 'received_at'], name: 'idx_network_flow_client_received')]
+#[ORM\Index(columns: ['received_at', 'device_id'], name: 'idx_network_flow_received_device')]
+#[ORM\Index(columns: ['received_at', 'client_id'], name: 'idx_network_flow_received_client')]
 #[ORM\Index(columns: ['src_ip'], name: 'idx_network_flow_src_ip')]
 #[ORM\Index(columns: ['dst_ip'], name: 'idx_network_flow_dst_ip')]
 #[ORM\Index(columns: ['post_nat_src_ip'], name: 'idx_network_flow_post_nat_src_ip')]

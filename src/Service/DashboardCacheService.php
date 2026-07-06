@@ -42,16 +42,18 @@ class DashboardCacheService
 
     private function buildPayload(): array
     {
+        $todayRange = $this->todayRangeParameters();
+
         return [
             'clients' => $this->em->getRepository(Client::class)->count(['status' => 'active']),
             'devices' => $this->em->getRepository(Device::class)->count([]),
             'unlinkedDevices' => (int) $this->em->createQuery('SELECT COUNT(d.id) FROM App\Entity\Device d WHERE d.client IS NULL')->getSingleScalarResult(),
-            'todayTraffic' => $this->todayTrafficFromFlows(),
-            'todayTrafficBreakdown' => $this->todayTrafficBreakdownFromFlows(),
-            'topDevices' => $this->topDeviceRowsFromFlows(),
-            'topClients' => $this->topClientRowsFromFlows(),
-            'topApps' => $this->topAppsFromFlows(),
-            'topDomains' => $this->topDestinationsFromFlows(),
+            'todayTraffic' => $this->todayTrafficFromFlows($todayRange),
+            'todayTrafficBreakdown' => $this->todayTrafficBreakdownFromFlows($todayRange),
+            'topDevices' => $this->topDeviceRowsFromFlows($todayRange),
+            'topClients' => $this->topClientRowsFromFlows($todayRange),
+            'topApps' => $this->topAppsFromFlows($todayRange),
+            'topDomains' => $this->topDestinationsFromFlows($todayRange),
             'latestDevices' => $this->latestDevices(),
             'generatedAt' => (new \DateTimeImmutable())->format(DATE_ATOM),
         ];
@@ -113,15 +115,15 @@ class DashboardCacheService
         return $modifiedAt !== false ? time() - $modifiedAt : null;
     }
 
-    private function todayTrafficFromFlows(): int
+    private function todayTrafficFromFlows(array $todayRange): int
     {
         return (int) $this->em->getConnection()->fetchOne(
-            'SELECT COALESCE(SUM(bytes), 0) FROM network_flow WHERE received_at BETWEEN :start AND :end',
-            $this->todayRangeParameters()
+            'SELECT COALESCE(SUM(bytes), 0) FROM network_flow WHERE received_at >= :start AND received_at < :end',
+            $todayRange
         );
     }
 
-    private function todayTrafficBreakdownFromFlows(): array
+    private function todayTrafficBreakdownFromFlows(array $todayRange): array
     {
         $row = $this->em->getConnection()->fetchAssociative(
             'SELECT
@@ -130,13 +132,13 @@ class DashboardCacheService
                 COALESCE(SUM(CASE WHEN direction = :local THEN bytes ELSE 0 END), 0) localBytes,
                 COALESCE(SUM(CASE WHEN direction = :external THEN bytes ELSE 0 END), 0) externalBytes
              FROM network_flow
-             WHERE received_at BETWEEN :start AND :end',
+             WHERE received_at >= :start AND received_at < :end',
             [
                 'download' => 'download',
                 'upload' => 'upload',
                 'local' => 'local',
                 'external' => 'external',
-            ] + $this->todayRangeParameters()
+            ] + $todayRange
         );
 
         return [
@@ -147,7 +149,7 @@ class DashboardCacheService
         ];
     }
 
-    private function topDeviceRowsFromFlows(): array
+    private function topDeviceRowsFromFlows(array $todayRange): array
     {
         $rows = $this->em->getConnection()->fetchAllAssociative(
             'SELECT
@@ -159,11 +161,11 @@ class DashboardCacheService
                 COALESCE(SUM(CASE WHEN f.direction = :upload THEN f.bytes ELSE 0 END), 0) uploadBytes
              FROM network_flow f
              INNER JOIN device d ON d.id = f.device_id
-             WHERE f.received_at BETWEEN :start AND :end
+             WHERE f.received_at >= :start AND f.received_at < :end
              GROUP BY d.id, d.mac, d.current_ip
              ORDER BY totalBytes DESC
              LIMIT 10',
-            ['download' => 'download', 'upload' => 'upload'] + $this->todayRangeParameters()
+            ['download' => 'download', 'upload' => 'upload'] + $todayRange
         );
 
         return array_map(fn (array $row): array => [
@@ -176,7 +178,7 @@ class DashboardCacheService
         ], $rows);
     }
 
-    private function topClientRowsFromFlows(): array
+    private function topClientRowsFromFlows(array $todayRange): array
     {
         $rows = $this->em->getConnection()->fetchAllAssociative(
             'SELECT
@@ -188,11 +190,11 @@ class DashboardCacheService
                 COALESCE(SUM(CASE WHEN f.direction = :upload THEN f.bytes ELSE 0 END), 0) uploadBytes
              FROM network_flow f
              INNER JOIN client c ON c.id = f.client_id
-             WHERE f.received_at BETWEEN :start AND :end
+             WHERE f.received_at >= :start AND f.received_at < :end
              GROUP BY c.id, c.full_name, c.room_number
              ORDER BY totalBytes DESC
              LIMIT 10',
-            ['download' => 'download', 'upload' => 'upload'] + $this->todayRangeParameters()
+            ['download' => 'download', 'upload' => 'upload'] + $todayRange
         );
 
         return array_map(fn (array $row): array => [
@@ -206,7 +208,7 @@ class DashboardCacheService
         ], $rows);
     }
 
-    private function topAppsFromFlows(): array
+    private function topAppsFromFlows(array $todayRange): array
     {
         $rows = $this->em->getConnection()->fetchAllAssociative(
             'SELECT
@@ -215,16 +217,17 @@ class DashboardCacheService
              FROM (
                  SELECT app_name appName, bytes
                  FROM network_flow
-                 WHERE received_at BETWEEN :start AND :end
+                 WHERE received_at >= :start AND received_at < :end
                    AND app_name IS NOT NULL
-                   AND LOWER(app_name) <> \'unknown\'
+                   AND app_name <> \'unknown\'
+                   AND app_name <> \'Unknown\'
                  ORDER BY received_at DESC
                  LIMIT 50000
              ) recent_flows
              GROUP BY appName
              ORDER BY totalBytes DESC
              LIMIT 10',
-            $this->todayRangeParameters()
+            $todayRange
         );
 
         $apps = [];
@@ -236,7 +239,7 @@ class DashboardCacheService
         return $apps;
     }
 
-    private function topDestinationsFromFlows(): array
+    private function topDestinationsFromFlows(array $todayRange): array
     {
         $rows = $this->em->getConnection()->fetchAllAssociative(
             'SELECT
@@ -245,17 +248,18 @@ class DashboardCacheService
              FROM (
                  SELECT domain, bytes
                  FROM network_flow
-                 WHERE received_at BETWEEN :start AND :end
+                 WHERE received_at >= :start AND received_at < :end
                    AND domain IS NOT NULL
-                   AND TRIM(domain) <> \'\'
-                   AND LOWER(TRIM(domain)) <> \'unknown\'
+                   AND domain <> \'\'
+                   AND domain <> \'unknown\'
+                   AND domain <> \'Unknown\'
                  ORDER BY received_at DESC
                  LIMIT 50000
              ) recent_flows
              GROUP BY domain
              ORDER BY totalBytes DESC
              LIMIT 10',
-            $this->todayRangeParameters()
+            $todayRange
         );
 
         $destinations = [];
@@ -302,7 +306,7 @@ class DashboardCacheService
 
         return [
             'start' => $today->setTime(0, 0)->format('Y-m-d H:i:s'),
-            'end' => $today->setTime(23, 59, 59)->format('Y-m-d H:i:s'),
+            'end' => $today->modify('+1 day')->setTime(0, 0)->format('Y-m-d H:i:s'),
         ];
     }
 }
