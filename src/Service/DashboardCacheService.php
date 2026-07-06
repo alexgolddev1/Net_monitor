@@ -210,12 +210,17 @@ class DashboardCacheService
     {
         $rows = $this->em->getConnection()->fetchAllAssociative(
             'SELECT
-                app_name appName,
+                appName,
                 COALESCE(SUM(bytes), 0) totalBytes
-             FROM network_flow
-             WHERE received_at BETWEEN :start AND :end
-               AND app_name IS NOT NULL
-               AND LOWER(app_name) <> \'unknown\'
+             FROM (
+                 SELECT app_name appName, bytes
+                 FROM network_flow
+                 WHERE received_at BETWEEN :start AND :end
+                   AND app_name IS NOT NULL
+                   AND LOWER(app_name) <> \'unknown\'
+                 ORDER BY received_at DESC
+                 LIMIT 50000
+             ) recent_flows
              GROUP BY appName
              ORDER BY totalBytes DESC
              LIMIT 10',
@@ -237,11 +242,16 @@ class DashboardCacheService
             'SELECT
                 domain,
                 COALESCE(SUM(bytes), 0) totalBytes
-             FROM network_flow
-             WHERE received_at BETWEEN :start AND :end
-               AND domain IS NOT NULL
-               AND TRIM(domain) <> \'\'
-               AND LOWER(TRIM(domain)) <> \'unknown\'
+             FROM (
+                 SELECT domain, bytes
+                 FROM network_flow
+                 WHERE received_at BETWEEN :start AND :end
+                   AND domain IS NOT NULL
+                   AND TRIM(domain) <> \'\'
+                   AND LOWER(TRIM(domain)) <> \'unknown\'
+                 ORDER BY received_at DESC
+                 LIMIT 50000
+             ) recent_flows
              GROUP BY domain
              ORDER BY totalBytes DESC
              LIMIT 10',

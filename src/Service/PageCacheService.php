@@ -350,19 +350,14 @@ class PageCacheService
     {
         $rows = $this->em->getConnection()->fetchAllAssociative(
             'SELECT
-                COALESCE(f.device_id, d.id) deviceId,
-                COALESCE(SUM(f.bytes), 0) totalBytes,
-                COALESCE(SUM(CASE WHEN f.direction = :download THEN f.bytes ELSE 0 END), 0) downloadBytes,
-                COALESCE(SUM(CASE WHEN f.direction = :upload THEN f.bytes ELSE 0 END), 0) uploadBytes
-             FROM network_flow f
-             LEFT JOIN device d ON f.device_id IS NULL
-               AND (
-                   (f.direction = :upload AND d.current_ip = f.src_ip)
-                   OR (f.direction = :download AND d.current_ip = COALESCE(f.post_nat_dst_ip, f.dst_ip))
-               )
-             WHERE COALESCE(f.device_id, d.id) IS NOT NULL
-               AND f.received_at BETWEEN :start AND :end
-             GROUP BY COALESCE(f.device_id, d.id)',
+                device_id deviceId,
+                COALESCE(SUM(bytes), 0) totalBytes,
+                COALESCE(SUM(CASE WHEN direction = :download THEN bytes ELSE 0 END), 0) downloadBytes,
+                COALESCE(SUM(CASE WHEN direction = :upload THEN bytes ELSE 0 END), 0) uploadBytes
+             FROM network_flow
+             WHERE device_id IS NOT NULL
+               AND received_at BETWEEN :start AND :end
+             GROUP BY device_id',
             ['download' => 'download', 'upload' => 'upload'] + $this->trafficRangeParameters($days)
         );
 
@@ -381,17 +376,12 @@ class PageCacheService
     private function usageTotalsByDeviceFromFlows(int $days): array
     {
         $rows = $this->em->getConnection()->fetchAllAssociative(
-            'SELECT COALESCE(f.device_id, d.id) deviceId, COALESCE(SUM(f.bytes), 0) totalBytes
-             FROM network_flow f
-             LEFT JOIN device d ON f.device_id IS NULL
-               AND (
-                   (f.direction = :upload AND d.current_ip = f.src_ip)
-                   OR (f.direction = :download AND d.current_ip = COALESCE(f.post_nat_dst_ip, f.dst_ip))
-               )
-             WHERE COALESCE(f.device_id, d.id) IS NOT NULL
-               AND f.received_at BETWEEN :start AND :end
-             GROUP BY COALESCE(f.device_id, d.id)',
-            ['download' => 'download', 'upload' => 'upload'] + $this->trafficRangeParameters($days)
+            'SELECT device_id deviceId, COALESCE(SUM(bytes), 0) totalBytes
+             FROM network_flow
+             WHERE device_id IS NOT NULL
+               AND received_at BETWEEN :start AND :end
+             GROUP BY device_id',
+            $this->trafficRangeParameters($days)
         );
 
         $totals = [];
@@ -405,21 +395,21 @@ class PageCacheService
     private function topDomainsByDeviceFromFlows(int $limitPerDevice): array
     {
         $rows = $this->em->getConnection()->fetchAllAssociative(
-            'SELECT COALESCE(f.device_id, d.id) deviceId, f.domain domain, COALESCE(SUM(f.bytes), 0) totalBytes
-             FROM network_flow f
-             LEFT JOIN device d ON f.device_id IS NULL
-               AND (
-                   (f.direction = :upload AND d.current_ip = f.src_ip)
-                   OR (f.direction = :download AND d.current_ip = COALESCE(f.post_nat_dst_ip, f.dst_ip))
-               )
-             WHERE COALESCE(f.device_id, d.id) IS NOT NULL
-               AND f.received_at BETWEEN :start AND :end
-               AND f.domain IS NOT NULL
-               AND TRIM(f.domain) <> \'\'
-               AND LOWER(TRIM(f.domain)) <> \'unknown\'
-             GROUP BY COALESCE(f.device_id, d.id), f.domain
+            'SELECT deviceId, domain, COALESCE(SUM(bytes), 0) totalBytes
+             FROM (
+                 SELECT device_id deviceId, domain, bytes
+                 FROM network_flow
+                 WHERE device_id IS NOT NULL
+                   AND received_at BETWEEN :start AND :end
+                   AND domain IS NOT NULL
+                   AND TRIM(domain) <> \'\'
+                   AND LOWER(TRIM(domain)) <> \'unknown\'
+                 ORDER BY received_at DESC
+                 LIMIT 50000
+             ) recent_flows
+             GROUP BY deviceId, domain
              ORDER BY deviceId ASC, totalBytes DESC',
-            ['download' => 'download', 'upload' => 'upload'] + $this->trafficRangeParameters(1)
+            $this->trafficRangeParameters(1)
         );
 
         $domainsByDevice = [];
@@ -467,14 +457,19 @@ class PageCacheService
     private function recentDomainsByDevice(): array
     {
         $rows = $this->em->getConnection()->fetchAllAssociative(
-            'SELECT device_id deviceId, domain, MAX(received_at) lastSeenAt, COALESCE(SUM(bytes), 0) totalBytes
-             FROM network_flow
-             WHERE device_id IS NOT NULL
-               AND received_at >= :from
-               AND domain IS NOT NULL
-               AND TRIM(domain) <> \'\'
-               AND LOWER(TRIM(domain)) <> \'unknown\'
-             GROUP BY device_id, domain
+            'SELECT deviceId, domain, MAX(receivedAt) lastSeenAt, COALESCE(SUM(bytes), 0) totalBytes
+             FROM (
+                 SELECT device_id deviceId, domain, received_at receivedAt, bytes
+                 FROM network_flow
+                 WHERE device_id IS NOT NULL
+                   AND received_at >= :from
+                   AND domain IS NOT NULL
+                   AND TRIM(domain) <> \'\'
+                   AND LOWER(TRIM(domain)) <> \'unknown\'
+                 ORDER BY received_at DESC
+                 LIMIT 20000
+             ) recent_flows
+             GROUP BY deviceId, domain
              ORDER BY deviceId ASC, lastSeenAt DESC',
             ['from' => (new \DateTimeImmutable('-30 days'))->format('Y-m-d H:i:s')]
         );
@@ -499,13 +494,18 @@ class PageCacheService
     private function topAppsByDevice(): array
     {
         $rows = $this->em->getConnection()->fetchAllAssociative(
-            'SELECT device_id deviceId, app_name appName, COALESCE(SUM(bytes), 0) totalBytes
-             FROM network_flow
-             WHERE device_id IS NOT NULL
-               AND received_at BETWEEN :start AND :end
-               AND app_name IS NOT NULL
-               AND LOWER(app_name) <> \'unknown\'
-             GROUP BY device_id, appName
+            'SELECT deviceId, appName, COALESCE(SUM(bytes), 0) totalBytes
+             FROM (
+                 SELECT device_id deviceId, app_name appName, bytes
+                 FROM network_flow
+                 WHERE device_id IS NOT NULL
+                   AND received_at BETWEEN :start AND :end
+                   AND app_name IS NOT NULL
+                   AND LOWER(app_name) <> \'unknown\'
+                 ORDER BY received_at DESC
+                 LIMIT 50000
+             ) recent_flows
+             GROUP BY deviceId, appName
              ORDER BY deviceId ASC, totalBytes DESC',
             $this->trafficRangeParameters(1)
         );

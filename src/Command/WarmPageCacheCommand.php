@@ -21,7 +21,9 @@ class WarmPageCacheCommand extends Command
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
+        $output->writeln('Refreshing dashboard cache...');
         $dashboard = $this->dashboardCache->refreshPayload();
+        $output->writeln('Refreshing page cache...');
         $pages = $this->pageCache->refresh();
 
         $output->writeln(sprintf(
