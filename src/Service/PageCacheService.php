@@ -648,9 +648,25 @@ class PageCacheService
             mkdir($directory, 0775, true);
         }
 
-        $temporaryPath = $path.'.tmp';
-        file_put_contents($temporaryPath, json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
-        rename($temporaryPath, $path);
+        if (!is_dir($directory)) {
+            return;
+        }
+
+        $temporaryPath = tempnam($directory, basename($path).'.');
+        if ($temporaryPath === false) {
+            return;
+        }
+
+        $encoded = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+        if (file_put_contents($temporaryPath, $encoded) === false) {
+            @unlink($temporaryPath);
+
+            return;
+        }
+
+        if (!@rename($temporaryPath, $path)) {
+            @unlink($temporaryPath);
+        }
     }
 
     private function cachePath(string $name): string
