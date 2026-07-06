@@ -30,19 +30,31 @@ class PageCacheService
 
     public function cachedClientRows(): array
     {
-        return $this->readCache('clients') ?? $this->emptyClientRows();
+        return $this->ensureCache(
+            'clients',
+            fn (): array => $this->refreshClients(),
+            fn (array $rows): bool => $rows === [] || (isset($rows[0]['lastSeen']) && isset($rows[0]['deviceCount']))
+        );
     }
 
     public function cachedDeviceDetail(int $deviceId): array
     {
-        $details = $this->readCache('device_details') ?? [];
+        $details = $this->ensureCache(
+            'device_details',
+            fn (): array => $this->refreshDevices(),
+            fn (array $details): bool => !$this->detailCacheUsesLegacyTimestamps($details)
+        );
 
         return $details[$deviceId] ?? $this->emptyDetailPayload();
     }
 
     public function cachedClientDetail(int $clientId): array
     {
-        $details = $this->readCache('client_details') ?? [];
+        $details = $this->ensureCache(
+            'client_details',
+            fn (): array => $this->refreshClients(),
+            fn (array $details): bool => !$this->detailCacheUsesLegacyTimestamps($details)
+        );
 
         return $details[$clientId] ?? $this->emptyDetailPayload();
     }
@@ -80,8 +92,8 @@ class PageCacheService
 
     public function refreshClients(): array
     {
-        $deviceRows = $this->readCache('devices') ?? $this->buildDeviceRows();
-        $deviceDetails = $this->readCache('device_details') ?? $this->buildDeviceDetails($deviceRows);
+        $deviceRows = $this->buildDeviceRows();
+        $deviceDetails = $this->buildDeviceDetails($deviceRows);
         $clientRows = $this->buildClientRows($deviceRows);
         $clientDetails = $this->buildClientDetails($clientRows, $deviceRows, $deviceDetails);
 
@@ -521,7 +533,7 @@ class PageCacheService
 
             $domainsByDevice[$deviceId][] = [
                 'domain' => (string) $row['domain'],
-                'lastSeenAt' => $row['lastSeenAt'] ?? null,
+                'lastSeenAt' => $this->formatDateTimeAtom($row['lastSeenAt'] ?? null),
                 'bytes' => (int) $row['totalBytes'],
             ];
         }
@@ -580,7 +592,7 @@ class PageCacheService
             }
 
             $activityByDevice[$deviceId][] = [
-                'receivedAt' => $row['receivedAt'] ?? null,
+                'receivedAt' => $this->formatDateTimeAtom($row['receivedAt'] ?? null),
                 'direction' => $this->directionLabel((string) ($row['direction'] ?? '')),
                 'label' => $this->activityLabel($row),
                 'bytes' => (int) ($row['bytes'] ?? 0),
@@ -655,6 +667,41 @@ class PageCacheService
         return is_numeric($port) ? sprintf('%s:%d', $ip, (int) $port) : $ip;
     }
 
+    private function formatDateTimeAtom(mixed $value): ?string
+    {
+        if (!is_string($value) || $value === '') {
+            return null;
+        }
+
+        try {
+            return (new \DateTimeImmutable($value))->format(DATE_ATOM);
+        } catch (\Exception) {
+            return $value;
+        }
+    }
+
+    private function detailCacheUsesLegacyTimestamps(array $details): bool
+    {
+        foreach ($details as $detail) {
+            if (!is_array($detail)) {
+                continue;
+            }
+
+            foreach (['recentDomains', 'recentActivity'] as $section) {
+                foreach ($detail[$section] ?? [] as $row) {
+                    foreach (['receivedAt', 'lastSeenAt'] as $field) {
+                        $value = $row[$field] ?? null;
+                        if (is_string($value) && preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $value) === 1) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
     private function trafficRangeParameters(int $days): array
     {
         $today = new \DateTimeImmutable('today');
@@ -676,6 +723,29 @@ class PageCacheService
         $payload = json_decode((string) file_get_contents($path), true);
 
         return is_array($payload) ? $payload : null;
+    }
+
+    /**
+     * @param callable():mixed $refresh
+     *
+     * @return array<string, mixed>
+     */
+    /**
+     * @param callable():mixed $refresh
+     * @param null|callable(array):bool $isFresh
+     *
+     * @return array<string, mixed>|list<mixed>
+     */
+    private function ensureCache(string $name, callable $refresh, ?callable $isFresh = null): array
+    {
+        $cached = $this->readCache($name);
+        if ($cached !== null && ($isFresh === null || $isFresh($cached))) {
+            return $cached;
+        }
+
+        $refresh();
+
+        return $this->readCache($name) ?? [];
     }
 
     private function writeCache(string $name, array $payload): void

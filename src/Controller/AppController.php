@@ -454,7 +454,7 @@ class AppController extends AbstractController
 
         return array_values(array_map(fn (array $row): array => [
             'domain' => (string) $row['domain'],
-            'lastSeenAt' => $row['lastSeenAt'] ?? null,
+            'lastSeenAt' => $this->formatDateTimeAtom($row['lastSeenAt'] ?? null),
             'bytes' => (int) $row['totalBytes'],
         ], $rows));
     }
@@ -534,7 +534,7 @@ class AppController extends AbstractController
             );
 
             return [
-                'receivedAt' => $row['received_at'] ?? null,
+                'receivedAt' => $this->formatDateTimeAtom($row['received_at'] ?? null),
                 'direction' => $this->directionLabel((string) ($row['direction'] ?? '')),
                 'label' => $label,
                 'bytes' => (int) ($row['bytes'] ?? 0),
@@ -654,6 +654,19 @@ class AppController extends AbstractController
         }
 
         return $port !== null ? sprintf('%s:%d', $ip, $port) : $ip;
+    }
+
+    private function formatDateTimeAtom(mixed $value): ?string
+    {
+        if (!is_string($value) || $value === '') {
+            return null;
+        }
+
+        try {
+            return (new \DateTimeImmutable($value))->format(DATE_ATOM);
+        } catch (\Exception) {
+            return $value;
+        }
     }
 
     private function deviceRows(bool $hideLinked = false): array
