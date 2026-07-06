@@ -444,7 +444,12 @@ class AppController extends AbstractController
         return array_values(array_map(function (array $row): array {
             $label = $this->normalizeActivityLabel(
                 isset($row['domain']) ? (string) $row['domain'] : null,
-                isset($row['app_name']) ? (string) $row['app_name'] : null
+                isset($row['app_name']) ? (string) $row['app_name'] : null,
+                (string) ($row['direction'] ?? ''),
+                isset($row['src_ip']) ? (string) $row['src_ip'] : null,
+                isset($row['dst_ip']) ? (string) $row['dst_ip'] : null,
+                $row['src_port'] ?? null,
+                $row['dst_port'] ?? null
             );
 
             return [
@@ -493,14 +498,31 @@ class AppController extends AbstractController
         return $appName === '' || is_numeric($appName) ? 'Unknown' : $appName;
     }
 
-    private function normalizeActivityLabel(?string $domain, ?string $appName): string
+    private function normalizeActivityLabel(
+        ?string $domain,
+        ?string $appName,
+        string $direction,
+        ?string $srcIp,
+        ?string $dstIp,
+        mixed $srcPort,
+        mixed $dstPort,
+    ): string
     {
         $domain = $domain !== null ? trim($domain) : '';
         if ($domain !== '' && strcasecmp($domain, 'unknown') !== 0) {
             return $domain;
         }
 
-        return $this->normalizeAppName($appName);
+        $appName = $this->normalizeAppName($appName);
+        if ($appName !== 'Unknown') {
+            return $appName;
+        }
+
+        return match ($direction) {
+            'upload' => $this->formatFlowEndpoint($dstIp, $dstPort),
+            'download' => $this->formatFlowEndpoint($srcIp, $srcPort),
+            default => $this->formatFlowEndpoint($dstIp ?: $srcIp, $dstIp ? $dstPort : $srcPort),
+        };
     }
 
     private function directionLabel(string $direction): string

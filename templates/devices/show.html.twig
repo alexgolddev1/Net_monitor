@@ -85,10 +85,23 @@
     {% set usageLabels = usageLabels|merge([usage.date|date('Y-m-d')]) %}
     {% set usageValues = usageValues|merge([(usage.totalBytes / 1048576)|round(1)]) %}
 {% endfor %}
+<script type="application/json" id="usageChartLabels">{{ usageLabels|json_encode|raw }}</script>
+<script type="application/json" id="usageChartValues">{{ usageValues|json_encode|raw }}</script>
 <script>
+const usageLabels = JSON.parse(document.getElementById('usageChartLabels').textContent);
+const usageValues = JSON.parse(document.getElementById('usageChartValues').textContent);
 new Chart(document.getElementById('usageChart'), {
   type: 'line',
-  data: { labels: {{ usageLabels|json_encode|raw }}, datasets: [{ label: 'МБ', data: {{ usageValues|json_encode|raw }}, borderColor: '#0f766e', backgroundColor: 'rgba(15,118,110,.12)', fill: true }] }
+  data: {
+    labels: usageLabels,
+    datasets: [{
+      label: 'МБ',
+      data: usageValues,
+      borderColor: '#0f766e',
+      backgroundColor: 'rgba(15,118,110,.12)',
+      fill: true
+    }]
+  }
 });
 </script>
 {% endblock %}
