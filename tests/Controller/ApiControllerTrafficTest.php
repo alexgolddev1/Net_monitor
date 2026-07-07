@@ -80,7 +80,7 @@ final class ApiControllerTrafficTest extends TestCase
         $connection = $this->createMock(Connection::class);
         $connection->expects(self::once())
             ->method('fetchAllAssociative')
-            ->with(self::stringContains('FROM network_flow'), self::callback(static function (array $params): bool {
+            ->with(self::stringContains('FROM traffic_hourly_usage'), self::callback(static function (array $params): bool {
                 return isset($params['start'], $params['end']);
             }))
             ->willReturn([
@@ -122,7 +122,7 @@ final class ApiControllerTrafficTest extends TestCase
 
         $payload = json_decode((string) $response->getContent(), true, 512, JSON_THROW_ON_ERROR);
         self::assertSame('hour', $payload['granularity']);
-        self::assertSame('2026-07-07 17:00', $payload['bucketLabel']);
+        self::assertSame('07.07.2026 17:00', $payload['bucketLabel']);
         self::assertCount(1, $payload['participants']);
         self::assertSame(3072, $payload['total']);
         self::assertSame('AA:BB:CC:DD:EE:FF', $payload['participants'][0]['mac']);

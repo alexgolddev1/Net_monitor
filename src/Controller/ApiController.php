@@ -468,7 +468,7 @@ class ApiController extends AbstractController
             $windowLabel = $start->format('d.m.Y');
         }
 
-        $rows = $this->trafficPointRowsFromFlows(
+        $rows = $this->trafficPointRowsFromRollups(
             $start->setTimezone($utc),
             $end->setTimezone($utc),
             $scopeType,
@@ -514,47 +514,38 @@ class ApiController extends AbstractController
         ];
     }
 
-    private function trafficPointRowsFromFlows(\DateTimeImmutable $start, \DateTimeImmutable $end, string $scopeType, ?int $scopeId): array
+    private function trafficPointRowsFromRollups(\DateTimeImmutable $start, \DateTimeImmutable $end, string $scopeType, ?int $scopeId): array
     {
         $params = [
             'start' => $start->format('Y-m-d H:i:s'),
             'end' => $end->format('Y-m-d H:i:s'),
         ];
 
-        $sql = "SELECT resolved.deviceId,
+        $sql = "SELECT d.id deviceId,
                        d.mac,
                        d.hostname,
                        d.current_ip currentIp,
                        c.id clientId,
                        c.full_name clientFullName,
                        c.room_number clientRoomNumber,
-                       SUM(CASE WHEN resolved.direction = 'download' THEN COALESCE(resolved.bytes, 0) ELSE 0 END) downloadBytes,
-                       SUM(CASE WHEN resolved.direction = 'upload' THEN COALESCE(resolved.bytes, 0) ELSE 0 END) uploadBytes
-                FROM (
-                    SELECT COALESCE(f.device_id, d.id) deviceId,
-                           f.direction,
-                           f.bytes
-                    FROM network_flow f
-                    LEFT JOIN device d ON f.device_id IS NULL AND (
-                        (f.direction = 'upload' AND d.current_ip = f.src_ip)
-                        OR (f.direction = 'download' AND d.current_ip = COALESCE(f.post_nat_dst_ip, f.dst_ip))
-                    )
-                    WHERE f.received_at >= :start
-                      AND f.received_at < :end
-                ) resolved
-                INNER JOIN device d ON d.id = resolved.deviceId
+                       COALESCE(SUM(u.download_bytes), 0) downloadBytes,
+                       COALESCE(SUM(u.upload_bytes), 0) uploadBytes
+                FROM traffic_hourly_usage u
+                INNER JOIN device d ON d.id = u.scope_id
                 LEFT JOIN client c ON c.id = d.client_id
-                WHERE 1=1";
+                WHERE u.scope_type = 'device'
+                  AND u.bucket_at >= :start
+                  AND u.bucket_at < :end";
 
         if ($scopeType === 'device' && $scopeId !== null) {
-            $sql .= ' AND resolved.deviceId = :scopeId';
+            $sql .= ' AND d.id = :scopeId';
             $params['scopeId'] = $scopeId;
         } elseif ($scopeType === 'client' && $scopeId !== null) {
             $sql .= ' AND c.id = :scopeId';
             $params['scopeId'] = $scopeId;
         }
 
-        $sql .= ' GROUP BY resolved.deviceId, d.mac, d.hostname, d.current_ip, c.id, c.full_name, c.room_number ORDER BY (downloadBytes + uploadBytes) DESC LIMIT 20';
+        $sql .= ' GROUP BY d.id, d.mac, d.hostname, d.current_ip, c.id, c.full_name, c.room_number ORDER BY (downloadBytes + uploadBytes) DESC LIMIT 20';
 
         return $this->em->getConnection()->fetchAllAssociative($sql, $params);
     }
