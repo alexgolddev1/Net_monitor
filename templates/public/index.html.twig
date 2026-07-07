@@ -5,16 +5,7 @@
 <div class="grid two">
     <section class="panel">
         <h2>Знайти пристрій</h2>
-        <div style="display:grid; gap:10px;">
-            <label>IP або MAC</label>
-            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                <div class="speedtest-pill" id="identifier-value">{{ identifier ?: 'Не вказано' }}</div>
-                {% if identifier %}
-                    <button type="button" class="btn secondary" id="identifier-copy">Скопіювати</button>
-                {% endif %}
-            </div>
-            <div class="muted">Значення береться з URL і не редагується на сторінці.</div>
-        </div>
+
 
         {% if message %}
             <div class="flash" style="margin-top:12px;">{{ message }}</div>
