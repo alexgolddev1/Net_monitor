@@ -16,7 +16,7 @@
 </head>
 <body>
 <form method="post">
-    <h1>Вхід адміністратора</h1>
+    <h1>Авторизація</h1>
     {% if error %}<div class="error">{{ error.messageKey|trans(error.messageData, 'security') }}</div>{% endif %}
     <label>Ім'я користувача</label>
     <input type="text" name="username" value="{{ last_username }}" autocomplete="username" required autofocus>
