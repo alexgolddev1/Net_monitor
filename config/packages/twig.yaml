@@ -4,3 +4,4 @@ twig:
   globals:
     app_name: 'Моніторинг мережі'
     page_cache: '@App\Service\PageCacheService'
+    dashboard_cache: '@App\Service\DashboardCacheService'
