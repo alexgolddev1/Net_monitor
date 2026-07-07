@@ -2,7 +2,7 @@ framework:
   secret: '%env(APP_SECRET)%'
   http_method_override: false
   handle_all_throwables: true
-  trusted_proxies: ['127.0.0.1', '::1', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16']
+  trusted_proxies: '127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16'
   trusted_headers: ['x-forwarded-for', 'x-forwarded-proto', 'x-forwarded-host', 'x-forwarded-port']
   session:
     handler_id: null
