@@ -1,0 +1,33 @@
+{% extends 'base.html.twig' %}
+{% block title %}Кабінети{% endblock %}
+{% block heading %}Кабінети{% endblock %}
+{% block body %}
+<div class="grid" style="gap:18px;">
+    {% for room, rows in groups %}
+        <section class="panel">
+            <h2>{{ room }}</h2>
+            <table>
+                <thead>
+                    <tr><th>Клієнт</th><th>Пристрої</th><th>Усього</th><th>Вхідний</th><th>Вихідний</th><th>Остання активність</th></tr>
+                </thead>
+                <tbody>
+                    {% for row in rows %}
+                        <tr>
+                            <td><a href="{{ path('client_show', {id: row.client.id}) }}">{{ row.client.displayName }}</a></td>
+                            <td>{{ row.deviceCount }}</td>
+                            <td>{{ (row.today / 1048576)|number_format(1) }} МБ</td>
+                            <td>{{ (row.todayDownload / 1048576)|number_format(1) }} МБ</td>
+                            <td>{{ (row.todayUpload / 1048576)|number_format(1) }} МБ</td>
+                            <td>{{ row.lastSeen ? row.lastSeen|date('Y-m-d H:i') : '-' }}</td>
+                        </tr>
+                    {% else %}
+                        <tr><td colspan="6" class="muted">Немає даних</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </section>
+    {% else %}
+        <div class="panel muted">Немає кабінетів.</div>
+    {% endfor %}
+</div>
+{% endblock %}

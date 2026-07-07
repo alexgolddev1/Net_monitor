@@ -9,7 +9,7 @@
     </label>
 </form>
 <table>
-    <tr><th>MAC</th><th>Поточний IP</th><th>Ім'я хоста</th><th>Виробник</th><th>VLAN</th><th>Клієнт</th><th>Усього</th><th>Вхідний</th><th>Вихідний</th><th>Топ домени сьогодні</th><th>Остання активність</th><th>Прив'язка</th></tr>
+    <tr><th>MAC</th><th>Поточний IP</th><th>Ім'я хоста</th><th>Виробник</th><th>VLAN</th><th>Клієнт</th><th>Усього</th><th>Вхідний</th><th>Вихідний</th><th>Топ домени сьогодні</th><th>Остання активність</th><th>Дії</th></tr>
     {% for row in devices %}
         <tr>
             <td><a href="{{ path('device_show',{id:row.device.id}) }}">{{ row.device.mac }}</a></td>
@@ -29,7 +29,19 @@
                 {% endfor %}
             </td>
             <td>{{ row.device.lastSeenAt ? row.device.lastSeenAt|date('Y-m-d H:i') : '-' }}</td>
-            <td><button type="button" onclick="document.getElementById('link-{{ row.device.id }}').showModal()">Прив'язати</button></td>
+            <td>
+                <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                    <button type="button" onclick="document.getElementById('link-{{ row.device.id }}').showModal()">
+                        {% if row.device.clientId %}Редагувати коментар{% else %}Прив'язати{% endif %}
+                    </button>
+                    {% if row.device.clientId %}
+                        <form method="post" action="{{ path('device_unlink_client', {id: row.device.id}) }}" style="margin:0;">
+                            <input type="hidden" name="_csrf_token" value="{{ csrf_token('device_unlink_client_' ~ row.device.id) }}">
+                            <button type="submit" class="secondary" onclick="return confirm('Відв\'язати пристрій?')">Відв'язати</button>
+                        </form>
+                    {% endif %}
+                </div>
+            </td>
         </tr>
     {% else %}
         <tr><td colspan="12" class="muted">Немає даних</td></tr>
@@ -37,8 +49,9 @@
 </table>
 {% for row in devices %}
 <dialog id="link-{{ row.device.id }}" class="panel">
-    <h2>Прив'язати {{ row.device.mac }}</h2>
+    <h2>{% if row.device.clientId %}Редагувати прив'язку{% else %}Прив'язати{% endif %} {{ row.device.mac }}</h2>
     <form method="post" action="{{ path('device_link_client',{id:row.device.id}) }}">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token('device_link_client_' ~ row.device.id) }}">
         <label>Існуючий клієнт</label>
         <select name="client_id" data-client-select><option value="">Створити нового</option>{% for client in clients %}<option value="{{ client.id }}" {% if row.device.clientId and row.device.clientId == client.id %}selected{% endif %}>{{ client.displayName }}{% if client.roomNumber %}, {{ client.roomNumber }}{% endif %}</option>{% endfor %}</select>
         <div class="form-grid" data-new-client-fields>

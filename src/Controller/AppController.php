@@ -66,6 +66,10 @@ class AppController extends AbstractController
     #[Route('/devices/{id}/link-client', name: 'device_link_client', methods: ['POST'])]
     public function linkDevice(Device $device, Request $request): Response
     {
+        if (!$this->isCsrfTokenValid('device_link_client_'.$device->getId(), (string) $request->request->get('_csrf_token'))) {
+            throw $this->createAccessDeniedException('Invalid CSRF token.');
+        }
+
         $clientId = (int) $request->request->get('client_id');
         $client = $clientId ? $this->em->getRepository(Client::class)->find($clientId) : null;
 
@@ -81,7 +85,23 @@ class AppController extends AbstractController
             ->setClient($client)
             ->setComment($this->normalizedInput($request->request->get('comment')));
         $this->em->flush();
+        $this->pageCache->refresh();
         $this->addFlash('success', 'Device linked.');
+
+        return $this->redirectToRoute('devices');
+    }
+
+    #[Route('/devices/{id}/unlink-client', name: 'device_unlink_client', methods: ['POST'], requirements: ['id' => '\d+'])]
+    public function unlinkDevice(Device $device, Request $request): Response
+    {
+        if (!$this->isCsrfTokenValid('device_unlink_client_'.$device->getId(), (string) $request->request->get('_csrf_token'))) {
+            throw $this->createAccessDeniedException('Invalid CSRF token.');
+        }
+
+        $device->setClient(null);
+        $this->em->flush();
+        $this->pageCache->refresh();
+        $this->addFlash('success', 'Device unlinked.');
 
         return $this->redirectToRoute('devices');
     }
@@ -207,6 +227,34 @@ class AppController extends AbstractController
         return $this->render('reports/index.html.twig', [
             'daily' => $this->reportRows(new \DateTimeImmutable('today')),
             'monthly' => $this->reportRows(new \DateTimeImmutable('-30 days')),
+        ]);
+    }
+
+    #[Route('/cabinets', name: 'cabinets')]
+    public function cabinets(): Response
+    {
+        $clients = $this->pageCache->cachedClientRows();
+        $groups = [];
+
+        foreach ($clients as $row) {
+            $room = trim((string) ($row['client']['roomNumber'] ?? ''));
+            $key = $room !== '' ? $room : 'Без кабінету';
+            $groups[$key][] = $row;
+        }
+
+        uksort($groups, static function (string $a, string $b): int {
+            if ($a === 'Без кабінету') {
+                return 1;
+            }
+            if ($b === 'Без кабінету') {
+                return -1;
+            }
+
+            return strnatcasecmp($a, $b);
+        });
+
+        return $this->render('cabinets/index.html.twig', [
+            'groups' => $groups,
         ]);
     }
 
