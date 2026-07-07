@@ -195,7 +195,7 @@ class ApiController extends AbstractController
     private function hourlyTrafficSeries(int $hours, string $label, string $scopeType = 'all', ?int $scopeId = null, ?string $filterLabel = null): array
     {
         $hours = max(1, $hours);
-        $now = new \DateTimeImmutable('now');
+        $now = new \DateTimeImmutable('now', $this->kyivTimezone());
         $end = $now->setTime((int) $now->format('H'), 59, 59);
         $startBase = $end->modify('-'.($hours - 1).' hours');
         $start = $startBase->setTime((int) $startBase->format('H'), 0, 0);
@@ -253,7 +253,7 @@ class ApiController extends AbstractController
     private function dailyTrafficSeries(int $days, string $label, string $scopeType = 'all', ?int $scopeId = null, ?string $filterLabel = null): array
     {
         $days = max(1, $days);
-        $today = new \DateTimeImmutable('today');
+        $today = new \DateTimeImmutable('today', $this->kyivTimezone());
         $start = $today->modify('-'.($days - 1).' days');
         $end = $today->setTime(23, 59, 59);
 
@@ -402,6 +402,7 @@ class ApiController extends AbstractController
     {
         $downloadTotal = array_sum($download);
         $uploadTotal = array_sum($upload);
+        $now = new \DateTimeImmutable('now', $this->kyivTimezone());
 
         return [
             'rangeLabel' => $label,
@@ -415,8 +416,13 @@ class ApiController extends AbstractController
             'total' => $downloadTotal + $uploadTotal,
             'from' => $start->format(DATE_ATOM),
             'to' => $end->format(DATE_ATOM),
-            'generatedAt' => (new \DateTimeImmutable())->format(DATE_ATOM),
+            'generatedAt' => $now->format(DATE_ATOM),
         ];
+    }
+
+    private function kyivTimezone(): \DateTimeZone
+    {
+        return new \DateTimeZone('Europe/Kyiv');
     }
 
     private function clientPayload(Client $client): array

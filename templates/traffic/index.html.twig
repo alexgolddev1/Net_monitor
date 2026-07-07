@@ -81,6 +81,11 @@
 <script>
 const trafficApiUrl = {{ path('api_traffic_series')|json_encode|raw }};
 const initialRange = new URLSearchParams(window.location.search).get('range') || '12h';
+const kyivTimeFormatter = new Intl.DateTimeFormat('uk-UA', {
+  dateStyle: 'short',
+  timeStyle: 'medium',
+  timeZone: 'Europe/Kyiv',
+});
 const trafficRangeButtons = Array.from(document.querySelectorAll('[data-traffic-range]'));
 const trafficState = {
   range: initialRange,
@@ -219,7 +224,7 @@ function createChart() {
 function updateHeader(payload) {
   trafficElements.rangeLabel.textContent = `Період: ${payload.rangeLabel || '-'}`;
   trafficElements.filterLabel.textContent = payload.filterLabel ? `Фільтр: ${payload.filterLabel}` : 'Фільтр: усі дані';
-  trafficElements.updated.textContent = payload.generatedAt ? `Оновлено: ${new Date(payload.generatedAt).toLocaleString()}` : 'Оновлення: -';
+  trafficElements.updated.textContent = payload.generatedAt ? `Оновлено: ${kyivTimeFormatter.format(new Date(payload.generatedAt))}` : 'Оновлення: -';
   trafficElements.total.textContent = `Усього: ${formatBytes(payload.total)}`;
   trafficElements.granularity.textContent = granularityLabel(payload.granularity);
 }
