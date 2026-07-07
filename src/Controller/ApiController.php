@@ -7,11 +7,11 @@ use App\Entity\Device;
 use App\Service\DashboardCacheService;
 use App\Service\MikroTikClient;
 use App\Service\PageCacheService;
-use App\Service\TrafficAggregator;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\HttpKernel\KernelInterface;
 use Symfony\Component\Routing\Attribute\Route;
 
 #[Route('/api')]
@@ -22,7 +22,7 @@ class ApiController extends AbstractController
         private readonly DashboardCacheService $dashboardCache,
         private readonly PageCacheService $pageCache,
         private readonly MikroTikClient $mikroTikClient,
-        private readonly TrafficAggregator $trafficAggregator,
+        private readonly KernelInterface $kernel,
     )
     {
     }
@@ -132,7 +132,15 @@ class ApiController extends AbstractController
                 }
             }
 
-            return $this->json($this->buildTrafficSeries((string) $request->query->get('range', '12h'), $scopeType, $scopeId, $filterLabel));
+            $range = $this->normalizeTrafficRange((string) $request->query->get('range', '12h'));
+            $cacheKey = $this->trafficSeriesCacheKey($range, $scopeType, $scopeId);
+            $payload = $this->readTrafficSeriesCache($cacheKey);
+            if ($payload === null) {
+                $payload = $this->buildTrafficSeries($range, $scopeType, $scopeId, $filterLabel);
+                $this->writeTrafficSeriesCache($cacheKey, $payload);
+            }
+
+            return $this->json($payload);
         } catch (\InvalidArgumentException) {
             return $this->json(['error' => 'Unsupported traffic range.'], 400);
         }
@@ -176,6 +184,14 @@ class ApiController extends AbstractController
         };
     }
 
+    private function normalizeTrafficRange(string $range): string
+    {
+        return match ($range) {
+            '12h', 'day', 'week', 'month' => $range,
+            default => throw new \InvalidArgumentException('Unsupported traffic range'),
+        };
+    }
+
     private function hourlyTrafficSeries(int $hours, string $label, string $scopeType = 'all', ?int $scopeId = null, ?string $filterLabel = null): array
     {
         $hours = max(1, $hours);
@@ -184,11 +200,10 @@ class ApiController extends AbstractController
         $startBase = $end->modify('-'.($hours - 1).' hours');
         $start = $startBase->setTime((int) $startBase->format('H'), 0, 0);
 
-        if ($this->trafficHourlyUsageTableExists()) {
-            $this->trafficAggregator->refreshRecentHourlyGraphUsage(max($hours, 48));
+        try {
             $rows = $this->hourlyTrafficRowsFromRollups($start, $end, $scopeType, $scopeId);
-        } else {
-            $rows = $this->hourlyTrafficRowsFromFlows($start, $end, $scopeType, $scopeId);
+        } catch (\Throwable) {
+            return $this->emptyTrafficSeriesPayload($hours, $label, 'hour', $filterLabel, $start, $end);
         }
 
         $data = [];
@@ -235,86 +250,12 @@ class ApiController extends AbstractController
         );
     }
 
-    private function hourlyTrafficRowsFromFlows(\DateTimeImmutable $start, \DateTimeImmutable $end, string $scopeType, ?int $scopeId): array
-    {
-        $params = [
-            'start' => $start->format('Y-m-d H:i:s'),
-            'end' => $end->format('Y-m-d H:i:s'),
-        ];
-
-        if ($scopeType === 'device' && $scopeId !== null) {
-            $params['scopeId'] = $scopeId;
-            return $this->em->getConnection()->fetchAllAssociative(
-                "SELECT resolved.bucketAt bucket,
-                        SUM(CASE WHEN resolved.direction = 'download' THEN COALESCE(resolved.bytes, 0) ELSE 0 END) downloadBytes,
-                        SUM(CASE WHEN resolved.direction = 'upload' THEN COALESCE(resolved.bytes, 0) ELSE 0 END) uploadBytes
-                 FROM (
-                     SELECT DATE_FORMAT(f.received_at, '%Y-%m-%d %H:00:00') bucketAt,
-                            COALESCE(f.device_id, d.id) deviceId,
-                            f.direction,
-                            f.bytes
-                     FROM network_flow f
-                     LEFT JOIN device d ON f.device_id IS NULL AND (
-                         (f.direction = 'upload' AND d.current_ip = f.src_ip)
-                         OR (f.direction = 'download' AND d.current_ip = COALESCE(f.post_nat_dst_ip, f.dst_ip))
-                     )
-                     WHERE f.received_at BETWEEN :start AND :end
-                 ) resolved
-                 WHERE resolved.deviceId = :scopeId
-                 GROUP BY resolved.bucketAt
-                 ORDER BY bucket ASC",
-                $params
-            );
-        }
-
-        if ($scopeType === 'client' && $scopeId !== null) {
-            $params['scopeId'] = $scopeId;
-            return $this->em->getConnection()->fetchAllAssociative(
-                "SELECT resolved.bucketAt bucket,
-                        SUM(CASE WHEN resolved.direction = 'download' THEN COALESCE(resolved.bytes, 0) ELSE 0 END) downloadBytes,
-                        SUM(CASE WHEN resolved.direction = 'upload' THEN COALESCE(resolved.bytes, 0) ELSE 0 END) uploadBytes
-                 FROM (
-                     SELECT DATE_FORMAT(f.received_at, '%Y-%m-%d %H:00:00') bucketAt,
-                            COALESCE(f.device_id, d.id) deviceId,
-                            f.direction,
-                            f.bytes
-                     FROM network_flow f
-                     LEFT JOIN device d ON f.device_id IS NULL AND (
-                         (f.direction = 'upload' AND d.current_ip = f.src_ip)
-                         OR (f.direction = 'download' AND d.current_ip = COALESCE(f.post_nat_dst_ip, f.dst_ip))
-                     )
-                     WHERE f.received_at BETWEEN :start AND :end
-                 ) resolved
-                 INNER JOIN device d ON d.id = resolved.deviceId
-                 WHERE d.client_id = :scopeId
-                 GROUP BY resolved.bucketAt
-                 ORDER BY bucket ASC",
-                $params
-            );
-        }
-
-        return $this->em->getConnection()->fetchAllAssociative(
-            "SELECT DATE_FORMAT(received_at, '%Y-%m-%d %H:00:00') bucket,
-                    SUM(CASE WHEN direction = 'download' THEN COALESCE(bytes, 0) ELSE 0 END) downloadBytes,
-                    SUM(CASE WHEN direction = 'upload' THEN COALESCE(bytes, 0) ELSE 0 END) uploadBytes
-             FROM network_flow
-             WHERE received_at BETWEEN :start AND :end
-             GROUP BY bucket
-             ORDER BY bucket ASC",
-            $params
-        );
-    }
-
     private function dailyTrafficSeries(int $days, string $label, string $scopeType = 'all', ?int $scopeId = null, ?string $filterLabel = null): array
     {
         $days = max(1, $days);
         $today = new \DateTimeImmutable('today');
         $start = $today->modify('-'.($days - 1).' days');
         $end = $today->setTime(23, 59, 59);
-
-        if (!$this->trafficHourlyUsageTableExists() && $scopeType !== 'all') {
-            return $this->emptyTrafficSeriesPayload($days, $label, 'day', $filterLabel, $start, $end);
-        }
 
         $params = [
             'start' => $start->format('Y-m-d'),
@@ -383,15 +324,6 @@ class ApiController extends AbstractController
         return $this->trafficSeriesPayload($label, $labels, $download, $upload, 'day', $start, $end, $filterLabel);
     }
 
-    private function trafficHourlyUsageTableExists(): bool
-    {
-        try {
-            return (bool) $this->em->getConnection()->fetchOne("SHOW TABLES LIKE 'traffic_hourly_usage'");
-        } catch (\Throwable) {
-            return false;
-        }
-    }
-
     private function emptyTrafficSeriesPayload(int $steps, string $label, string $granularity, ?string $filterLabel, \DateTimeImmutable $start, \DateTimeImmutable $end): array
     {
         $steps = max(1, $steps);
@@ -405,6 +337,65 @@ class ApiController extends AbstractController
             $end,
             $filterLabel
         );
+    }
+
+    private function trafficSeriesCacheKey(string $range, string $scopeType, ?int $scopeId): string
+    {
+        return sprintf('traffic_series_%s_%s_%s', $range, $scopeType, $scopeId ?? 0);
+    }
+
+    private function readTrafficSeriesCache(string $key): ?array
+    {
+        $path = $this->trafficSeriesCachePath($key);
+        if (!is_file($path)) {
+            return null;
+        }
+
+        $cached = json_decode((string) file_get_contents($path), true);
+        if (!is_array($cached)) {
+            return null;
+        }
+
+        $modifiedAt = @filemtime($path);
+        if ($modifiedAt === false || (time() - $modifiedAt) > 60) {
+            return null;
+        }
+
+        return $cached;
+    }
+
+    private function writeTrafficSeriesCache(string $key, array $payload): void
+    {
+        $path = $this->trafficSeriesCachePath($key);
+        $directory = dirname($path);
+        if (!is_dir($directory)) {
+            mkdir($directory, 0775, true);
+        }
+
+        if (!is_dir($directory)) {
+            return;
+        }
+
+        $temporaryPath = tempnam($directory, basename($path).'.');
+        if ($temporaryPath === false) {
+            return;
+        }
+
+        $encoded = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+        if (file_put_contents($temporaryPath, $encoded) === false) {
+            @unlink($temporaryPath);
+
+            return;
+        }
+
+        if (!@rename($temporaryPath, $path)) {
+            @unlink($temporaryPath);
+        }
+    }
+
+    private function trafficSeriesCachePath(string $key): string
+    {
+        return $this->kernel->getProjectDir().'/var/cache/'.$key.'.json';
     }
 
     private function trafficSeriesPayload(string $label, array $labels, array $download, array $upload, string $granularity, \DateTimeImmutable $start, \DateTimeImmutable $end, ?string $filterLabel = null): array
