@@ -1,0 +1,297 @@
+{% extends 'base.html.twig' %}
+{% block title %}Графік трафіку{% endblock %}
+{% block heading %}Графік трафіку{% endblock %}
+{% block body %}
+<div class="traffic-shell">
+    <section class="panel">
+        <div class="traffic-toolbar">
+            <div>
+                <h2>Вхідний і вихідний трафік</h2>
+                <div class="muted">Графік показує сумарний обсяг трафіку за вибраний період.</div>
+            </div>
+            <div class="traffic-range-group">
+                <button type="button" class="btn secondary is-active" data-traffic-range="12h">12 год</button>
+                <button type="button" class="btn secondary" data-traffic-range="day">Доба</button>
+                <button type="button" class="btn secondary" data-traffic-range="week">Тиждень</button>
+                <button type="button" class="btn secondary" data-traffic-range="month">Місяць</button>
+            </div>
+        </div>
+
+        <div class="form-grid" style="margin-top:14px;">
+            <div>
+                <label for="traffic-device">Пристрій</label>
+                <select id="traffic-device">
+                    <option value="">Усі пристрої</option>
+                    {% for device in devices %}
+                        <option value="{{ device.id }}" {% if selectedDeviceId and selectedDeviceId == device.id %}selected{% endif %}>{{ device.mac }}{% if device.currentIp %} · {{ device.currentIp }}{% endif %}{% if device.hostname %} · {{ device.hostname }}{% endif %}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label for="traffic-client">Клієнт</label>
+                <select id="traffic-client">
+                    <option value="">Усі клієнти</option>
+                    {% for client in clients %}
+                        <option value="{{ client.id }}" {% if selectedClientId and selectedClientId == client.id %}selected{% endif %}>{{ client.displayName }}{% if client.roomNumber %} · {{ client.roomNumber }}{% endif %}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+
+        <div class="traffic-meta" style="margin-top:10px;">
+            <div id="traffic-range-label">Період: ...</div>
+            <div id="traffic-updated">Оновлення: ...</div>
+        </div>
+        <div class="traffic-meta" style="margin-top:6px;">
+            <div id="traffic-filter-label">Фільтр: усі дані</div>
+            <div id="traffic-live-state">Live-режим: вимкнено</div>
+        </div>
+
+        <div class="traffic-summary" style="margin-top:14px;">
+            <div class="stat"><div class="muted">Вхідний</div><div class="value" id="traffic-download-total">...</div></div>
+            <div class="stat"><div class="muted">Вихідний</div><div class="value" id="traffic-upload-total">...</div></div>
+            <div class="stat"><div class="muted">Усього</div><div class="value" id="traffic-total">...</div></div>
+            <div class="stat"><div class="muted">Крок графіка</div><div class="value" id="traffic-granularity">...</div></div>
+        </div>
+
+        <div class="traffic-chart-box" style="margin-top:16px;">
+            <canvas id="trafficChart"></canvas>
+        </div>
+    </section>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const trafficApiUrl = {{ path('api_traffic_series')|json_encode|raw }};
+const trafficRangeButtons = Array.from(document.querySelectorAll('[data-traffic-range]'));
+const trafficState = {
+  range: '12h',
+  chart: null,
+  refreshTimer: null,
+};
+
+const trafficElements = {
+  device: document.getElementById('traffic-device'),
+  client: document.getElementById('traffic-client'),
+  rangeLabel: document.getElementById('traffic-range-label'),
+  updated: document.getElementById('traffic-updated'),
+  filterLabel: document.getElementById('traffic-filter-label'),
+  liveState: document.getElementById('traffic-live-state'),
+  downloadTotal: document.getElementById('traffic-download-total'),
+  uploadTotal: document.getElementById('traffic-upload-total'),
+  total: document.getElementById('traffic-total'),
+  granularity: document.getElementById('traffic-granularity'),
+};
+
+function formatBytes(bytes) {
+  const value = Number(bytes) || 0;
+  if (value >= 1073741824) return `${(value / 1073741824).toFixed(1)} ГБ`;
+  if (value >= 1048576) return `${(value / 1048576).toFixed(1)} МБ`;
+  if (value >= 1024) return `${(value / 1024).toFixed(1)} КБ`;
+  return `${Math.round(value)} Б`;
+}
+
+function granularityLabel(value) {
+  return {
+    hour: 'Погодинно',
+    day: 'Щодня',
+  }[value] || value || '-';
+}
+
+function setActiveRange(range) {
+  trafficState.range = range;
+  trafficRangeButtons.forEach((button) => {
+    const active = button.dataset.trafficRange === range;
+    button.classList.toggle('is-active', active);
+    button.setAttribute('aria-pressed', active ? 'true' : 'false');
+  });
+}
+
+function currentFilters() {
+  const deviceId = trafficElements.device?.value || '';
+  const clientId = trafficElements.client?.value || '';
+  if (deviceId) {
+    return { deviceId };
+  }
+  if (clientId) {
+    return { clientId };
+  }
+  return {};
+}
+
+function syncUrlState(range) {
+  const params = new URLSearchParams(window.location.search);
+  params.set('range', range);
+  const filters = currentFilters();
+  if (filters.deviceId) {
+    params.set('deviceId', filters.deviceId);
+    params.delete('clientId');
+  } else if (filters.clientId) {
+    params.set('clientId', filters.clientId);
+    params.delete('deviceId');
+  } else {
+    params.delete('deviceId');
+    params.delete('clientId');
+  }
+  const nextUrl = `${window.location.pathname}?${params.toString()}`;
+  window.history.replaceState({}, '', nextUrl);
+}
+
+function buildTrafficUrl(range) {
+  const params = new URLSearchParams({ range });
+  const filters = currentFilters();
+  Object.entries(filters).forEach(([key, value]) => params.set(key, value));
+  return `${trafficApiUrl}?${params.toString()}`;
+}
+
+function syncFilterLabel(payload) {
+  trafficElements.filterLabel.textContent = payload.filterLabel ? `Фільтр: ${payload.filterLabel}` : 'Фільтр: усі дані';
+}
+
+function updateLiveState() {
+  const isLive = trafficState.range === '12h';
+  trafficElements.liveState.textContent = isLive ? 'Live-режим: увімкнено' : 'Live-режим: вимкнено';
+}
+
+function stopLiveRefresh() {
+  if (trafficState.refreshTimer) {
+    clearInterval(trafficState.refreshTimer);
+    trafficState.refreshTimer = null;
+  }
+  updateLiveState();
+}
+
+function startLiveRefresh() {
+  stopLiveRefresh();
+  if (trafficState.range !== '12h') {
+    return;
+  }
+  trafficState.refreshTimer = window.setInterval(() => {
+    loadTraffic(trafficState.range, false).catch((error) => console.warn('Traffic live refresh failed', error));
+  }, 20000);
+  updateLiveState();
+}
+
+function createChart() {
+  const canvas = document.getElementById('trafficChart');
+  trafficState.chart = new Chart(canvas, {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [
+        {
+          label: 'Вхідний',
+          data: [],
+          borderColor: '#0f766e',
+          backgroundColor: 'rgba(15, 118, 110, 0.15)',
+          tension: 0.32,
+          fill: true,
+          pointRadius: 2,
+        },
+        {
+          label: 'Вихідний',
+          data: [],
+          borderColor: '#f59e0b',
+          backgroundColor: 'rgba(245, 158, 11, 0.14)',
+          tension: 0.32,
+          fill: true,
+          pointRadius: 2,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: {
+        mode: 'index',
+        intersect: false,
+      },
+      plugins: {
+        legend: {
+          position: 'bottom',
+        },
+        tooltip: {
+          callbacks: {
+            label: (context) => `${context.dataset.label}: ${formatBytes(context.parsed.y)}`,
+          },
+        },
+      },
+      scales: {
+        y: {
+          beginAtZero: true,
+          ticks: {
+            callback: (value) => formatBytes(value),
+          },
+        },
+      },
+    },
+  });
+}
+
+function updateChart(payload) {
+  trafficState.chart.data.labels = payload.labels || [];
+  trafficState.chart.data.datasets[0].data = payload.download || [];
+  trafficState.chart.data.datasets[1].data = payload.upload || [];
+  trafficState.chart.update();
+}
+
+function updateSummary(payload) {
+  trafficElements.rangeLabel.textContent = `Період: ${payload.rangeLabel || '-'}`;
+  trafficElements.updated.textContent = payload.generatedAt ? `Оновлено: ${new Date(payload.generatedAt).toLocaleString()}` : 'Оновлено: -';
+  syncFilterLabel(payload);
+  trafficElements.downloadTotal.textContent = formatBytes(payload.downloadTotal);
+  trafficElements.uploadTotal.textContent = formatBytes(payload.uploadTotal);
+  trafficElements.total.textContent = formatBytes(payload.total);
+  trafficElements.granularity.textContent = granularityLabel(payload.granularity);
+}
+
+async function loadTraffic(range, restartLive = true) {
+  setActiveRange(range);
+  syncUrlState(range);
+  const response = await fetch(buildTrafficUrl(range), {
+    headers: { Accept: 'application/json' },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Traffic API ${response.status}`);
+  }
+
+  const payload = await response.json();
+  updateSummary(payload);
+  updateChart(payload);
+  if (restartLive) {
+    if (range === '12h') {
+      startLiveRefresh();
+    } else {
+      stopLiveRefresh();
+    }
+  }
+}
+
+trafficRangeButtons.forEach((button) => {
+  button.addEventListener('click', () => {
+    loadTraffic(button.dataset.trafficRange).catch((error) => console.warn('Traffic series load failed', error));
+  });
+});
+
+trafficElements.device.addEventListener('change', () => {
+  if (trafficElements.device.value) {
+    trafficElements.client.value = '';
+  }
+  loadTraffic(trafficState.range).catch((error) => console.warn('Traffic series reload failed', error));
+});
+
+trafficElements.client.addEventListener('change', () => {
+  if (trafficElements.client.value) {
+    trafficElements.device.value = '';
+  }
+  loadTraffic(trafficState.range).catch((error) => console.warn('Traffic series reload failed', error));
+});
+
+createChart();
+loadTraffic(new URLSearchParams(window.location.search).get('range') || trafficState.range).catch((error) => {
+  console.warn('Traffic series load failed', error);
+  trafficElements.rangeLabel.textContent = 'Період: помилка завантаження';
+});
+</script>
+{% endblock %}

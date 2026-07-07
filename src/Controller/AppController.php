@@ -256,6 +256,20 @@ class AppController extends AbstractController
         ]);
     }
 
+    #[Route('/traffic', name: 'traffic')]
+    public function traffic(Request $request): Response
+    {
+        $devices = $this->em->getRepository(Device::class)->findBy([], ['mac' => 'ASC']);
+        $clients = $this->em->getRepository(Client::class)->findBy([], ['fullName' => 'ASC']);
+
+        return $this->render('traffic/index.html.twig', [
+            'devices' => $devices,
+            'clients' => $clients,
+            'selectedDeviceId' => (int) $request->query->get('deviceId', 0),
+            'selectedClientId' => (int) ($request->query->get('deviceId') ? 0 : $request->query->get('clientId', 0)),
+        ]);
+    }
+
     #[Route('/cabinets', name: 'cabinets')]
     public function cabinets(): Response
     {

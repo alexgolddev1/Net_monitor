@@ -58,6 +58,14 @@
         .speedtest-logs { font-size:13px; color:var(--muted); min-height:1.5em; }
         .speedtest-frame { width:100%; min-height:520px; border:1px solid var(--line); border-radius:10px; background:#fff; }
         .speedtest-external-note { font-size:13px; color:var(--muted); line-height:1.45; }
+        .traffic-shell { display:grid; gap:16px; }
+        .traffic-toolbar { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap; }
+        .traffic-range-group { display:flex; gap:8px; flex-wrap:wrap; }
+        .traffic-range-group .btn.is-active { background:#111827; }
+        .traffic-summary { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; }
+        .traffic-chart-box { position:relative; min-height:420px; }
+        .traffic-chart-box canvas { position:absolute; inset:0; width:100% !important; height:100% !important; }
+        .traffic-meta { display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; font-size:13px; color:var(--muted); }
         .favicon { width:18px; height:18px; vertical-align:middle; margin-right:8px; border-radius:4px; }
         @media (max-width: 820px) { .layout { grid-template-columns:1fr; } .sidebar { position:static; } .two,.public-two { grid-template-columns:1fr; } table { display:block; overflow-x:auto; } }
     </style>
@@ -73,6 +81,7 @@
                 <a href="{{ path('cabinets') }}" class="nav-item"><span>Кабінети</span></a>
                 <a href="{{ path('devices') }}" class="nav-item"><span>Пристрої</span></a>
                 <a href="{{ path('reports') }}" class="nav-item"><span>Звіти</span></a>
+                <a href="{{ path('traffic') }}" class="nav-item"><span>Графік трафіку</span></a>
                 {% set pendingProfileRequestsCount = pending_device_profile_requests_count() %}
                 <a href="{{ path('admin_device_profile_requests') }}" class="nav-item">
                     <span>Запити змін</span>

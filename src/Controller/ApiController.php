@@ -104,6 +104,38 @@ class ApiController extends AbstractController
         return $this->report(new \DateTimeImmutable('-30 days'));
     }
 
+    #[Route('/traffic', methods: ['GET'], name: 'api_traffic_series')]
+    public function trafficSeries(Request $request): JsonResponse
+    {
+        try {
+            $deviceIds = [];
+            $filterLabel = null;
+            $deviceId = (int) $request->query->get('deviceId', 0);
+            $clientId = (int) $request->query->get('clientId', 0);
+
+            if ($deviceId > 0) {
+                $deviceIds = [$deviceId];
+                $device = $this->em->getRepository(Device::class)->find($deviceId);
+                $filterLabel = $device ? sprintf('Пристрій: %s', $device->getMac()) : sprintf('Пристрій #%d не знайдено', $deviceId);
+            } elseif ($clientId > 0) {
+                $client = $this->em->getRepository(Client::class)->find($clientId);
+                if ($client) {
+                    $deviceIds = array_values(array_filter(array_map(
+                        static fn (Device $device): ?int => $device->getId(),
+                        $client->getDevices()->toArray()
+                    )));
+                    $filterLabel = sprintf('Клієнт: %s', $client->getDisplayName());
+                } else {
+                    $filterLabel = sprintf('Клієнт #%d не знайдено', $clientId);
+                }
+            }
+
+            return $this->json($this->buildTrafficSeries((string) $request->query->get('range', '12h'), $deviceIds, $filterLabel, $deviceId > 0 ? 'device' : ($clientId > 0 ? 'client' : null)));
+        } catch (\InvalidArgumentException) {
+            return $this->json(['error' => 'Unsupported traffic range.'], 400);
+        }
+    }
+
     private function dashboardPayload(): array
     {
         $today = $this->todayDateParameter();
@@ -129,6 +161,191 @@ class ApiController extends AbstractController
             ->setParameter('from', $from)
             ->getArrayResult();
         return $this->json($rows);
+    }
+
+    private function buildTrafficSeries(string $range, array $deviceIds = [], ?string $filterLabel = null, ?string $filterType = null): array
+    {
+        if ($filterType !== null && $deviceIds === []) {
+            return match ($range) {
+                '12h' => $this->emptyTrafficSeries(12, 'Останні 12 годин', 'hour', $filterLabel),
+                'day' => $this->emptyTrafficSeries(24, 'Останні 24 години', 'hour', $filterLabel),
+                'week' => $this->emptyTrafficSeries(7, 'Останні 7 днів', 'day', $filterLabel),
+                'month' => $this->emptyTrafficSeries(30, 'Останні 30 днів', 'day', $filterLabel),
+                default => throw new \InvalidArgumentException('Unsupported traffic range'),
+            };
+        }
+
+        return match ($range) {
+            '12h' => $this->hourlyTrafficSeries(12, 'Останні 12 годин', $deviceIds, $filterLabel),
+            'day' => $this->hourlyTrafficSeries(24, 'Останні 24 години', $deviceIds, $filterLabel),
+            'week' => $this->dailyTrafficSeries(7, 'Останні 7 днів', $deviceIds, $filterLabel),
+            'month' => $this->dailyTrafficSeries(30, 'Останні 30 днів', $deviceIds, $filterLabel),
+            default => throw new \InvalidArgumentException('Unsupported traffic range'),
+        };
+    }
+
+    private function hourlyTrafficSeries(int $hours, string $label, array $deviceIds = [], ?string $filterLabel = null): array
+    {
+        $hours = max(1, $hours);
+        $now = new \DateTimeImmutable('now');
+        $end = $now->setTime((int) $now->format('H'), 59, 59);
+        $startBase = $end->modify('-'.($hours - 1).' hours');
+        $start = $startBase->setTime((int) $startBase->format('H'), 0, 0);
+
+        $params = [
+            'start' => $start->format('Y-m-d H:i:s'),
+            'end' => $end->format('Y-m-d H:i:s'),
+        ];
+        $where = 'received_at BETWEEN :start AND :end';
+        if ($deviceIds !== []) {
+            $deviceWhere = $this->buildInCondition('device_id', $deviceIds, $params);
+            $where .= ' AND '.$deviceWhere;
+        }
+
+        $params['download'] = 'download';
+        $params['upload'] = 'upload';
+        $sql = 'SELECT DATE_FORMAT(received_at, \'%Y-%m-%d %H:00:00\') bucket,
+                COALESCE(SUM(CASE WHEN direction = :download THEN COALESCE(bytes, 0) ELSE 0 END), 0) downloadBytes,
+                COALESCE(SUM(CASE WHEN direction = :upload THEN COALESCE(bytes, 0) ELSE 0 END), 0) uploadBytes
+         FROM network_flow
+         WHERE '.$where.'
+         GROUP BY bucket
+         ORDER BY bucket ASC';
+
+        $rows = $this->em->getConnection()->fetchAllAssociative($sql, $params);
+
+        $data = [];
+        foreach ($rows as $row) {
+            $data[(string) $row['bucket']] = [
+                'download' => (int) ($row['downloadBytes'] ?? 0),
+                'upload' => (int) ($row['uploadBytes'] ?? 0),
+            ];
+        }
+
+        $labels = [];
+        $download = [];
+        $upload = [];
+
+        $cursor = $start;
+        for ($i = 0; $i < $hours; ++$i) {
+            $bucket = $cursor->format('Y-m-d H:00:00');
+            $labels[] = $cursor->format('d.m H:00');
+            $download[] = $data[$bucket]['download'] ?? 0;
+            $upload[] = $data[$bucket]['upload'] ?? 0;
+            $cursor = $cursor->modify('+1 hour');
+        }
+
+        return $this->trafficSeriesPayload($label, $labels, $download, $upload, 'hour', $start, $end, $filterLabel);
+    }
+
+    private function dailyTrafficSeries(int $days, string $label, array $deviceIds = [], ?string $filterLabel = null): array
+    {
+        $days = max(1, $days);
+        $today = new \DateTimeImmutable('today');
+        $start = $today->modify('-'.($days - 1).' days');
+        $end = $today->setTime(23, 59, 59);
+
+        $params = [
+            'start' => $start->format('Y-m-d'),
+            'end' => $today->format('Y-m-d'),
+        ];
+
+        if ($deviceIds !== []) {
+            $where = 'date BETWEEN :start AND :end';
+            $deviceWhere = $this->buildInCondition('device_id', $deviceIds, $params);
+            $where .= ' AND '.$deviceWhere;
+            $sql = 'SELECT date bucket,
+                    COALESCE(SUM(bytes_in), 0) downloadBytes,
+                    COALESCE(SUM(bytes_out), 0) uploadBytes
+             FROM device_daily_usage
+             WHERE '.$where.'
+             GROUP BY date
+             ORDER BY bucket ASC';
+        } else {
+            $where = 'date BETWEEN :start AND :end';
+            $params['download'] = 'download';
+            $params['upload'] = 'upload';
+            $sql = 'SELECT date bucket,
+                    COALESCE(SUM(CASE WHEN direction = :download THEN bytes ELSE 0 END), 0) downloadBytes,
+                    COALESCE(SUM(CASE WHEN direction = :upload THEN bytes ELSE 0 END), 0) uploadBytes
+             FROM traffic_daily_direction_usage
+             WHERE '.$where.'
+             GROUP BY date
+             ORDER BY bucket ASC';
+        }
+
+        $rows = $this->em->getConnection()->fetchAllAssociative($sql, $params);
+
+        $data = [];
+        foreach ($rows as $row) {
+            $data[(string) $row['bucket']] = [
+                'download' => (int) ($row['downloadBytes'] ?? 0),
+                'upload' => (int) ($row['uploadBytes'] ?? 0),
+            ];
+        }
+
+        $labels = [];
+        $download = [];
+        $upload = [];
+
+        $cursor = $start;
+        for ($i = 0; $i < $days; ++$i) {
+            $bucket = $cursor->format('Y-m-d');
+            $labels[] = $cursor->format('d.m');
+            $download[] = $data[$bucket]['download'] ?? 0;
+            $upload[] = $data[$bucket]['upload'] ?? 0;
+            $cursor = $cursor->modify('+1 day');
+        }
+
+        return $this->trafficSeriesPayload($label, $labels, $download, $upload, 'day', $start, $end, $filterLabel);
+    }
+
+    private function trafficSeriesPayload(string $label, array $labels, array $download, array $upload, string $granularity, \DateTimeImmutable $start, \DateTimeImmutable $end, ?string $filterLabel = null): array
+    {
+        $downloadTotal = array_sum($download);
+        $uploadTotal = array_sum($upload);
+
+        return [
+            'rangeLabel' => $label,
+            'filterLabel' => $filterLabel,
+            'granularity' => $granularity,
+            'labels' => $labels,
+            'download' => $download,
+            'upload' => $upload,
+            'downloadTotal' => $downloadTotal,
+            'uploadTotal' => $uploadTotal,
+            'total' => $downloadTotal + $uploadTotal,
+            'from' => $start->format(DATE_ATOM),
+            'to' => $end->format(DATE_ATOM),
+            'generatedAt' => (new \DateTimeImmutable())->format(DATE_ATOM),
+        ];
+    }
+
+    private function emptyTrafficSeries(int $steps, string $label, string $granularity, ?string $filterLabel = null): array
+    {
+        $steps = max(1, $steps);
+        $labels = array_fill(0, $steps, '');
+        $download = array_fill(0, $steps, 0);
+        $upload = array_fill(0, $steps, 0);
+        $end = new \DateTimeImmutable('now');
+        $start = $end->modify('-'.($steps - 1).' '.($granularity === 'hour' ? 'hours' : 'days'));
+
+        return $this->trafficSeriesPayload($label, $labels, $download, $upload, $granularity, $start, $end, $filterLabel);
+    }
+
+    /**
+     * @param int[] $values
+     */
+    private function buildInCondition(string $column, array $values, array &$params): string
+    {
+        $placeholders = [];
+        foreach (array_values(array_map('intval', $values)) as $index => $value) {
+            $name = sprintf('%s_%d', $column, $index);
+            $params[$name] = $value;
+            $placeholders[] = ':'.$name;
+        }
+
+        return sprintf('%s IN (%s)', $column, implode(',', $placeholders));
     }
 
     private function clientPayload(Client $client): array
