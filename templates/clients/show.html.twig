@@ -5,7 +5,6 @@
 <div class="grid stats">
     <div class="stat"><div class="muted">Кімната</div><div class="value">{{ client.roomNumber ?: '-' }}</div></div>
     <div class="stat"><div class="muted">Телефон</div><div class="value">{{ client.phone ?: '-' }}</div></div>
-    <div class="stat"><div class="muted">Коментар</div><div class="value">{{ client.comment ?: '-' }}</div></div>
     <div class="stat"><div class="muted">Пристрої</div><div class="value">{{ devices|length }}</div></div>
     <div class="stat"><div class="muted">Сьогодні</div><div class="value">{{ today|format_bytes }}</div></div>
     <div class="stat"><div class="muted">Вхідний</div><div class="value">{{ todayDownload|format_bytes }}</div></div>
@@ -27,7 +26,7 @@
                     <td>{{ row.today|format_bytes }}</td>
                     <td>{{ row.todayDownload|format_bytes }}</td>
                     <td>{{ row.todayUpload|format_bytes }}</td>
-                    <td>{{ device.comment ?: '-' }}</td>
+                    <td>{{ device.clientComment ?: '-' }}</td>
                 </tr>
             {% else %}
                 <tr><td colspan="8">Немає даних</td></tr>
