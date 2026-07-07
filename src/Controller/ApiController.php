@@ -195,20 +195,25 @@ class ApiController extends AbstractController
     private function hourlyTrafficSeries(int $hours, string $label, string $scopeType = 'all', ?int $scopeId = null, ?string $filterLabel = null): array
     {
         $hours = max(1, $hours);
-        $now = new \DateTimeImmutable('now', $this->kyivTimezone());
+        $kyiv = $this->kyivTimezone();
+        $utc = $this->utcTimezone();
+        $now = new \DateTimeImmutable('now', $kyiv);
         $end = $now->setTime((int) $now->format('H'), 59, 59);
         $startBase = $end->modify('-'.($hours - 1).' hours');
         $start = $startBase->setTime((int) $startBase->format('H'), 0, 0);
+        $startUtc = $start->setTimezone($utc);
+        $endUtc = $end->setTimezone($utc);
 
         try {
-            $rows = $this->hourlyTrafficRowsFromRollups($start, $end, $scopeType, $scopeId);
+            $rows = $this->hourlyTrafficRowsFromRollups($startUtc, $endUtc, $scopeType, $scopeId);
         } catch (\Throwable) {
             return $this->emptyTrafficSeriesPayload($hours, $label, 'hour', $filterLabel, $start, $end);
         }
 
         $data = [];
         foreach ($rows as $row) {
-            $data[(string) $row['bucket']] = [
+            $bucket = (new \DateTimeImmutable((string) $row['bucket'], $utc))->setTimezone($kyiv)->format('Y-m-d H:00:00');
+            $data[$bucket] = [
                 'download' => (int) ($row['downloadBytes'] ?? 0),
                 'upload' => (int) ($row['uploadBytes'] ?? 0),
             ];
@@ -253,59 +258,19 @@ class ApiController extends AbstractController
     private function dailyTrafficSeries(int $days, string $label, string $scopeType = 'all', ?int $scopeId = null, ?string $filterLabel = null): array
     {
         $days = max(1, $days);
-        $today = new \DateTimeImmutable('today', $this->kyivTimezone());
+        $kyiv = $this->kyivTimezone();
+        $utc = $this->utcTimezone();
+        $today = new \DateTimeImmutable('today', $kyiv);
         $start = $today->modify('-'.($days - 1).' days');
         $end = $today->setTime(23, 59, 59);
-
-        $params = [
-            'start' => $start->format('Y-m-d'),
-            'end' => $today->format('Y-m-d'),
-        ];
-
-        if ($scopeType !== 'all' && $scopeId !== null) {
-            $where = 'date BETWEEN :start AND :end';
-            $params['scopeId'] = $scopeId;
-            if ($scopeType === 'device') {
-                $where .= ' AND device_id = :scopeId';
-                $sql = 'SELECT date bucket,
-                        COALESCE(SUM(bytes_in), 0) downloadBytes,
-                        COALESCE(SUM(bytes_out), 0) uploadBytes
-                 FROM device_daily_usage
-                 WHERE '.$where.'
-                 GROUP BY date
-                 ORDER BY bucket ASC';
-            } else {
-                $where .= ' AND d.client_id = :scopeId';
-                $sql = 'SELECT u.date bucket,
-                        COALESCE(SUM(u.bytes_in), 0) downloadBytes,
-                        COALESCE(SUM(u.bytes_out), 0) uploadBytes
-                 FROM device_daily_usage u
-                 INNER JOIN device d ON d.id = u.device_id
-                 WHERE '.$where.'
-                 GROUP BY u.date
-                 ORDER BY bucket ASC';
-            }
-        } else {
-            $where = 'date BETWEEN :start AND :end';
-            $params['download'] = 'download';
-            $params['upload'] = 'upload';
-            $sql = 'SELECT date bucket,
-                    COALESCE(SUM(CASE WHEN direction = :download THEN bytes ELSE 0 END), 0) downloadBytes,
-                    COALESCE(SUM(CASE WHEN direction = :upload THEN bytes ELSE 0 END), 0) uploadBytes
-             FROM traffic_daily_direction_usage
-             WHERE '.$where.'
-             GROUP BY date
-             ORDER BY bucket ASC';
-        }
-
-        $rows = $this->em->getConnection()->fetchAllAssociative($sql, $params);
+        $rows = $this->hourlyTrafficRowsFromRollups($start->setTimezone($utc), $end->setTimezone($utc), $scopeType, $scopeId);
 
         $data = [];
         foreach ($rows as $row) {
-            $data[(string) $row['bucket']] = [
-                'download' => (int) ($row['downloadBytes'] ?? 0),
-                'upload' => (int) ($row['uploadBytes'] ?? 0),
-            ];
+            $bucket = new \DateTimeImmutable((string) $row['bucket'], $utc);
+            $bucketKey = $bucket->setTimezone($kyiv)->format('Y-m-d');
+            $data[$bucketKey]['download'] = ($data[$bucketKey]['download'] ?? 0) + (int) ($row['downloadBytes'] ?? 0);
+            $data[$bucketKey]['upload'] = ($data[$bucketKey]['upload'] ?? 0) + (int) ($row['uploadBytes'] ?? 0);
         }
 
         $labels = [];
@@ -423,6 +388,11 @@ class ApiController extends AbstractController
     private function kyivTimezone(): \DateTimeZone
     {
         return new \DateTimeZone('Europe/Kyiv');
+    }
+
+    private function utcTimezone(): \DateTimeZone
+    {
+        return new \DateTimeZone('UTC');
     }
 
     private function clientPayload(Client $client): array
