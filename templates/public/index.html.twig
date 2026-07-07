@@ -20,6 +20,10 @@
             <div class="flash" style="margin-top:12px;">{{ message }}</div>
         {% endif %}
 
+        {% if not profileRequestsReady %}
+            <div class="muted" style="margin-top:12px;">Модуль запитів змін ще не активований. Потрібно застосувати міграцію.</div>
+        {% endif %}
+
         {% if device %}
             <div class="grid stats" style="margin-top:16px;">
                 <div class="stat"><div class="muted">MAC</div><div class="value">{{ device.mac }}</div></div>
@@ -64,6 +68,9 @@
                     </div>
                 </div>
                 <div class="muted">Зміни будуть застосовані тільки після підтвердження адміністратором.</div>
+                {% if not profileRequestsReady %}
+                    <div class="muted">Збереження запитів тимчасово недоступне до міграції бази.</div>
+                {% endif %}
                 <div style="display:flex; gap:8px; flex-wrap:wrap;">
                     <button type="submit">Надіслати на підтвердження</button>
                 </div>

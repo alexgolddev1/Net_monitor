@@ -29,6 +29,7 @@ class PublicController extends AbstractController
         $identifier = $identifier !== ''
             ? $identifier
             : trim((string) ($request->query->get('ip', $request->query->get('mac', ''))));
+        $profileRequestsReady = $this->hasDeviceProfileRequestsTable();
         if ($identifier === '') {
             $clientIp = $request->getClientIp();
             if ($clientIp !== null) {
@@ -53,7 +54,9 @@ class PublicController extends AbstractController
             $deviceId = (int) $request->request->get('device_id');
             $device = $deviceId > 0 ? $this->em->getRepository(Device::class)->find($deviceId) : $device;
 
-            if (!$device) {
+            if (!$profileRequestsReady) {
+                $message = 'Запити змін ще не активовані. Потрібно застосувати міграцію бази даних.';
+            } elseif (!$device) {
                 $message = 'Пристрій не знайдено.';
             } else {
                 $changeRequest = (new DeviceProfileChangeRequest())
@@ -96,10 +99,12 @@ class PublicController extends AbstractController
             ];
 
             $deviceDetail = $this->pageCache->cachedDeviceDetail((int) $device->getId());
-            $pendingRequests = $this->em->getRepository(DeviceProfileChangeRequest::class)->findBy(
-                ['device' => $device, 'status' => 'pending'],
-                ['createdAt' => 'DESC']
-            );
+            if ($profileRequestsReady) {
+                $pendingRequests = $this->em->getRepository(DeviceProfileChangeRequest::class)->findBy(
+                    ['device' => $device, 'status' => 'pending'],
+                    ['createdAt' => 'DESC']
+                );
+            }
         }
 
         return $this->render('public/index.html.twig', [
@@ -108,6 +113,7 @@ class PublicController extends AbstractController
             'deviceDetail' => $deviceDetail,
             'pendingRequests' => $pendingRequests,
             'message' => $message,
+            'profileRequestsReady' => $profileRequestsReady,
         ]);
     }
 
@@ -116,5 +122,12 @@ class PublicController extends AbstractController
         $value = is_string($value) ? trim($value) : null;
 
         return $value === '' ? null : $value;
+    }
+
+    private function hasDeviceProfileRequestsTable(): bool
+    {
+        $tables = $this->em->getConnection()->createSchemaManager()->listTableNames();
+
+        return in_array('device_profile_change_request', $tables, true);
     }
 }

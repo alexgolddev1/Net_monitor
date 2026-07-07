@@ -26,10 +26,13 @@ class AdminDeviceProfileRequestController extends AbstractController
     public function index(): Response
     {
         return $this->render('admin/device_profile_requests.html.twig', [
-            'pendingRequests' => $this->em->getRepository(DeviceProfileChangeRequest::class)->findBy(
-                ['status' => 'pending'],
-                ['createdAt' => 'DESC']
-            ),
+            'pendingRequests' => $this->hasDeviceProfileRequestsTable()
+                ? $this->em->getRepository(DeviceProfileChangeRequest::class)->findBy(
+                    ['status' => 'pending'],
+                    ['createdAt' => 'DESC']
+                )
+                : [],
+            'profileRequestsReady' => $this->hasDeviceProfileRequestsTable(),
         ]);
     }
 
@@ -101,5 +104,12 @@ class AdminDeviceProfileRequestController extends AbstractController
         $value = is_string($value) ? trim($value) : null;
 
         return $value === '' ? null : $value;
+    }
+
+    private function hasDeviceProfileRequestsTable(): bool
+    {
+        $tables = $this->em->getConnection()->createSchemaManager()->listTableNames();
+
+        return in_array('device_profile_change_request', $tables, true);
     }
 }
