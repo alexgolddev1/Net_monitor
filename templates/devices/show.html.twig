@@ -6,7 +6,7 @@
     <div class="stat"><div class="muted">IP</div><div class="value">{{ device.currentIp ?: '-' }}</div></div>
     <div class="stat"><div class="muted">Сьогодні</div><div class="value">{{ (todayBytes / 1048576)|number_format(1) }} МБ</div></div>
     <div class="stat"><div class="muted">30 днів</div><div class="value">{{ (monthBytes / 1048576)|number_format(1) }} МБ</div></div>
-    <div class="stat"><div class="muted">Клієнт</div><div class="value">{{ device.client ? device.client.displayName : 'не прив'язано' }}</div></div>
+    <div class="stat"><div class="muted">Клієнт</div><div class="value">{{ device.client ? device.client.displayName : "не прив'язано" }}</div></div>
 </div>
 <div class="grid two">
     <section class="panel"><h2>Активність за 30 днів</h2><canvas id="usageChart" height="160"></canvas></section>
