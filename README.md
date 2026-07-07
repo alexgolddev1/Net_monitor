@@ -1,4 +1,4 @@
-# Network Monitor MVP
+# Мережева панель KPDI
 
 Symfony MVP for network monitoring with:
 

@@ -2,6 +2,6 @@ twig:
   default_path: '%kernel.project_dir%/templates'
   form_themes: ['bootstrap_5_layout.html.twig']
   globals:
-    app_name: 'Моніторинг мережі'
+    app_name: 'Мережева панель KPDI'
     page_cache: '@App\Service\PageCacheService'
     dashboard_cache: '@App\Service\DashboardCacheService'

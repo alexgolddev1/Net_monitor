@@ -39,6 +39,21 @@
         .form-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:10px; align-items:end; }
         .flash { background:#ecfdf5; border:1px solid #a7f3d0; color:#065f46; padding:10px 12px; border-radius:8px; margin-bottom:12px; }
         .two { grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
+        .speedtest-shell { display:grid; gap:14px; }
+        .speedtest-header { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; flex-wrap:wrap; }
+        .speedtest-status { font-size:14px; color:var(--muted); line-height:1.4; }
+        .speedtest-actions { display:flex; gap:8px; flex-wrap:wrap; }
+        .speedtest-results { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:12px; }
+        .speedtest-result { border:1px solid var(--line); border-radius:10px; padding:14px; background:linear-gradient(180deg, #fff, #f8fafc); }
+        .speedtest-result .label { font-size:12px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); }
+        .speedtest-result .value { font-size:24px; font-weight:750; margin-top:8px; }
+        .speedtest-result .meta { font-size:12px; color:var(--muted); margin-top:4px; }
+        .speedtest-progress { display:grid; gap:8px; }
+        .speedtest-bar { position:relative; height:12px; border-radius:999px; overflow:hidden; background:#e5e7eb; }
+        .speedtest-bar > span { position:absolute; inset:0 auto 0 0; width:0%; border-radius:999px; background:linear-gradient(90deg, #0f766e, #14b8a6); transition:width .18s ease; }
+        .speedtest-logs { font-size:13px; color:var(--muted); min-height:1.5em; }
+        .speedtest-frame { width:100%; min-height:520px; border:1px solid var(--line); border-radius:10px; background:#fff; }
+        .speedtest-external-note { font-size:13px; color:var(--muted); line-height:1.45; }
         .favicon { width:18px; height:18px; vertical-align:middle; margin-right:8px; border-radius:4px; }
         @media (max-width: 820px) { .layout { grid-template-columns:1fr; } .sidebar { position:static; } .two { grid-template-columns:1fr; } table { display:block; overflow-x:auto; } }
     </style>

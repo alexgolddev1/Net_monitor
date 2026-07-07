@@ -9,8 +9,10 @@ use App\Repository\DeviceRepository;
 use App\Service\PageCacheService;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
+use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 use Symfony\Component\Routing\Attribute\Route;
 
 class PublicController extends AbstractController
@@ -115,6 +117,55 @@ class PublicController extends AbstractController
             'message' => $message,
             'profileRequestsReady' => $profileRequestsReady,
         ]);
+    }
+
+    #[Route('/speedtest/ping', name: 'public_speedtest_ping', methods: ['GET'])]
+    public function speedtestPing(): JsonResponse
+    {
+        return $this->json([
+            'ok' => true,
+            'serverTime' => (new \DateTimeImmutable())->format(DATE_ATOM),
+        ], Response::HTTP_OK, ['Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0']);
+    }
+
+    #[Route('/speedtest/download', name: 'public_speedtest_download', methods: ['GET'])]
+    public function speedtestDownload(Request $request): StreamedResponse
+    {
+        $size = max(256 * 1024, min((int) $request->query->get('size', 8 * 1024 * 1024), 20 * 1024 * 1024));
+        $chunkSize = 64 * 1024;
+        $chunk = random_bytes($chunkSize);
+        $remaining = $size;
+
+        $response = new StreamedResponse(static function () use (&$remaining, $chunk, $chunkSize): void {
+            while ($remaining > 0) {
+                $bytesToSend = min($remaining, $chunkSize);
+                echo substr($chunk, 0, $bytesToSend);
+                $remaining -= $bytesToSend;
+
+                if (function_exists('ob_get_level') && ob_get_level() > 0) {
+                    @ob_flush();
+                }
+                flush();
+            }
+        });
+        $response->headers->set('Content-Type', 'application/octet-stream');
+        $response->headers->set('Content-Disposition', 'inline; filename="speedtest.bin"');
+        $response->headers->set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+        $response->headers->set('Content-Length', (string) $size);
+        $response->headers->set('X-Accel-Buffering', 'no');
+
+        return $response;
+    }
+
+    #[Route('/speedtest/upload', name: 'public_speedtest_upload', methods: ['POST'])]
+    public function speedtestUpload(Request $request): JsonResponse
+    {
+        $receivedBytes = strlen((string) $request->getContent());
+
+        return $this->json([
+            'ok' => true,
+            'receivedBytes' => $receivedBytes,
+        ], Response::HTTP_OK, ['Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0']);
     }
 
     private function normalizedInput(mixed $value): ?string

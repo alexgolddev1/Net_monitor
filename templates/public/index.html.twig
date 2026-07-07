@@ -8,12 +8,7 @@
         <form method="get" style="display:grid; gap:10px;">
             <label>IP або MAC</label>
             <input name="identifier" value="{{ identifier }}" placeholder="192.168.0.10 або A8:41:F4:60:22:A7">
-            <div style="display:flex; gap:8px; flex-wrap:wrap;">
-                <button type="submit">Показати статистику</button>
-                {% if device %}
-                    <a class="btn secondary" href="{{ path('home') }}">Очистити</a>
-                {% endif %}
-            </div>
+            <div class="muted">Натисніть Enter, щоб відкрити статистику пристрою.</div>
         </form>
 
         {% if message %}
@@ -98,4 +93,253 @@
         {% endif %}
     </section>
 </div>
+<div class="grid two" style="margin-top:16px;">
+    <section class="panel speedtest-shell">
+        <div class="speedtest-header">
+            <div>
+                <h2 style="margin-bottom:6px;">Тест локальної мережі</h2>
+                <div class="speedtest-status">Перевірка йде до цього сервера. Це показує якість каналу від вашого пристрою до панелі всередині локальної мережі.</div>
+            </div>
+            <div class="speedtest-actions">
+                <button type="button" id="speedtest-start">Запустити тест</button>
+                <button type="button" id="speedtest-stop" class="btn secondary" disabled>Зупинити</button>
+            </div>
+        </div>
+
+        <div class="speedtest-progress">
+            <div class="speedtest-bar" aria-hidden="true"><span id="speedtest-bar"></span></div>
+            <div class="speedtest-logs" id="speedtest-log">Натисніть "Запустити тест", щоб почати.</div>
+        </div>
+
+        <div class="speedtest-results">
+            <div class="speedtest-result">
+                <div class="label">Ping</div>
+                <div class="value" id="speedtest-ping">-</div>
+                <div class="meta">Середня затримка</div>
+            </div>
+            <div class="speedtest-result">
+                <div class="label">Download</div>
+                <div class="value" id="speedtest-download">-</div>
+                <div class="meta">Завантаження з сервера</div>
+            </div>
+            <div class="speedtest-result">
+                <div class="label">Upload</div>
+                <div class="value" id="speedtest-upload">-</div>
+                <div class="meta">Відправка на сервер</div>
+            </div>
+            <div class="speedtest-result">
+                <div class="label">Статус</div>
+                <div class="value" id="speedtest-status">Готово</div>
+                <div class="meta" id="speedtest-detail">Очікує запуску</div>
+            </div>
+        </div>
+    </section>
+
+    <section class="panel">
+        <div class="speedtest-header">
+            <div>
+                <h2 style="margin-bottom:6px;">Тест у зовнішній світ</h2>
+                <div class="speedtest-external-note">
+                    Це офіційний Speedtest від Ookla. Він перевіряє інтернет-канал до зовнішніх серверів, а не локальну мережу.
+                </div>
+            </div>
+            <div class="speedtest-actions">
+                <a class="btn" href="https://www.speedtest.net/" target="_blank" rel="noopener noreferrer">Відкрити Speedtest</a>
+            </div>
+        </div>
+        <iframe
+            class="speedtest-frame"
+            src="https://www.speedtest.net/"
+            title="Speedtest by Ookla"
+            loading="lazy"
+            referrerpolicy="no-referrer"
+        ></iframe>
+        <div class="speedtest-external-note" style="margin-top:10px;">
+            Якщо iframe не завантажиться через обмеження браузера або політику сайту, відкрийте Speedtest у новій вкладці кнопкою вище.
+        </div>
+    </section>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const speedtestEndpoints = {
+  ping: {{ path('public_speedtest_ping')|json_encode|raw }},
+  download: {{ path('public_speedtest_download')|json_encode|raw }},
+  upload: {{ path('public_speedtest_upload')|json_encode|raw }},
+};
+
+const speedtestState = {
+  controller: null,
+};
+
+const speedtestElements = {
+  start: document.getElementById('speedtest-start'),
+  stop: document.getElementById('speedtest-stop'),
+  bar: document.getElementById('speedtest-bar'),
+  log: document.getElementById('speedtest-log'),
+  ping: document.getElementById('speedtest-ping'),
+  download: document.getElementById('speedtest-download'),
+  upload: document.getElementById('speedtest-upload'),
+  status: document.getElementById('speedtest-status'),
+  detail: document.getElementById('speedtest-detail'),
+};
+
+function formatMs(value) {
+  return `${Math.round(Number(value) || 0)} мс`;
+}
+
+function formatMbps(bitsPerSecond) {
+  const value = Number(bitsPerSecond) || 0;
+  if (value >= 1_000_000_000) {
+    return `${(value / 1_000_000_000).toFixed(1)} Гбіт/с`;
+  }
+  return `${(value / 1_000_000).toFixed(1)} Мбіт/с`;
+}
+
+function setProgress(value) {
+  speedtestElements.bar.style.width = `${Math.max(0, Math.min(100, value))}%`;
+}
+
+function setStatus(label, detail = '') {
+  speedtestElements.status.textContent = label;
+  speedtestElements.detail.textContent = detail;
+}
+
+function setLog(message) {
+  speedtestElements.log.textContent = message;
+}
+
+function setBusy(isBusy) {
+  speedtestElements.start.disabled = isBusy;
+  speedtestElements.stop.disabled = !isBusy;
+}
+
+function resetResults() {
+  speedtestElements.ping.textContent = '-';
+  speedtestElements.download.textContent = '-';
+  speedtestElements.upload.textContent = '-';
+  setProgress(0);
+  setStatus('Готово', 'Очікує запуску');
+  setLog('Натисніть "Запустити тест", щоб почати.');
+}
+
+async function measurePing(signal) {
+  const samples = [];
+
+  for (let index = 0; index < 5; index += 1) {
+    const startedAt = performance.now();
+    const response = await fetch(`${speedtestEndpoints.ping}?t=${Date.now()}-${index}`, {
+      cache: 'no-store',
+      signal,
+    });
+    if (!response.ok) {
+      throw new Error(`Ping failed: ${response.status}`);
+    }
+    samples.push(performance.now() - startedAt);
+  }
+
+  samples.sort((left, right) => left - right);
+  return samples[Math.floor(samples.length / 2)];
+}
+
+async function measureDownload(signal) {
+  const startedAt = performance.now();
+  const response = await fetch(`${speedtestEndpoints.download}?size=8388608&t=${Date.now()}`, {
+    cache: 'no-store',
+    signal,
+  });
+  if (!response.ok || !response.body) {
+    throw new Error(`Download failed: ${response.status}`);
+  }
+
+  const reader = response.body.getReader();
+  let receivedBytes = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    receivedBytes += value.length;
+  }
+
+  const elapsedSeconds = (performance.now() - startedAt) / 1000;
+  return (receivedBytes * 8) / elapsedSeconds;
+}
+
+async function measureUpload(signal) {
+  const payload = new Uint8Array(4 * 1024 * 1024);
+  for (let offset = 0; offset < payload.length; offset += 65536) {
+    crypto.getRandomValues(payload.subarray(offset, Math.min(offset + 65536, payload.length)));
+  }
+  const startedAt = performance.now();
+  const response = await fetch(speedtestEndpoints.upload, {
+    method: 'POST',
+    cache: 'no-store',
+    signal,
+    headers: {
+      'Content-Type': 'application/octet-stream',
+    },
+    body: payload,
+  });
+  if (!response.ok) {
+    throw new Error(`Upload failed: ${response.status}`);
+  }
+
+  const elapsedSeconds = (performance.now() - startedAt) / 1000;
+  return (payload.byteLength * 8) / elapsedSeconds;
+}
+
+async function runSpeedTest() {
+  if (speedtestState.controller) {
+    speedtestState.controller.abort();
+  }
+
+  speedtestState.controller = new AbortController();
+  setBusy(true);
+  setStatus('Підготовка', 'Запуск тесту');
+  setLog('Перевірка ping...');
+  setProgress(10);
+
+  try {
+    const pingMs = await measurePing(speedtestState.controller.signal);
+    speedtestElements.ping.textContent = formatMs(pingMs);
+    setStatus('Тестування', 'Вимірюю download');
+    setLog('Вимірюється швидкість завантаження...');
+    setProgress(40);
+
+    const downloadMbps = await measureDownload(speedtestState.controller.signal);
+    speedtestElements.download.textContent = formatMbps(downloadMbps);
+    setStatus('Тестування', 'Вимірюю upload');
+    setLog('Вимірюється швидкість відправки...');
+    setProgress(75);
+
+    const uploadMbps = await measureUpload(speedtestState.controller.signal);
+    speedtestElements.upload.textContent = formatMbps(uploadMbps);
+    setStatus('Готово', 'Тест завершено');
+    setLog('Тест швидкості завершено.');
+    setProgress(100);
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      setStatus('Зупинено', 'Тест перервано користувачем');
+      setLog('Тест зупинено.');
+    } else {
+      console.warn('Speedtest failed', error);
+      setStatus('Помилка', 'Не вдалося виконати тест');
+      setLog(error?.message || 'Невідома помилка');
+    }
+  } finally {
+    setBusy(false);
+    speedtestState.controller = null;
+  }
+}
+
+speedtestElements.start.addEventListener('click', runSpeedTest);
+speedtestElements.stop.addEventListener('click', () => {
+  if (speedtestState.controller) {
+    speedtestState.controller.abort();
+  }
+});
+
+resetResults();
+</script>
 {% endblock %}
