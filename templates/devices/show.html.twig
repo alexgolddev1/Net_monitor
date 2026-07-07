@@ -4,8 +4,8 @@
 {% block body %}
 <div class="grid stats">
     <div class="stat"><div class="muted">IP</div><div class="value">{{ device.currentIp ?: '-' }}</div></div>
-    <div class="stat"><div class="muted">Сьогодні</div><div class="value">{{ (todayBytes / 1048576)|number_format(1) }} МБ</div></div>
-    <div class="stat"><div class="muted">30 днів</div><div class="value">{{ (monthBytes / 1048576)|number_format(1) }} МБ</div></div>
+    <div class="stat"><div class="muted">Сьогодні</div><div class="value">{{ todayBytes|format_bytes }}</div></div>
+    <div class="stat"><div class="muted">30 днів</div><div class="value">{{ monthBytes|format_bytes }}</div></div>
     <div class="stat"><div class="muted">Клієнт</div><div class="value">{{ device.client ? device.client.displayName : "не прив'язано" }}</div></div>
 </div>
 <div class="grid two">
@@ -75,10 +75,10 @@ const trafficUrl = {{ path('api_device_traffic', {id: device.id})|json_encode|ra
 
 function formatBytes(bytes) {
   const value = Number(bytes) || 0;
-  if (value >= 1073741824) return `${(value / 1073741824).toFixed(1)} GB`;
+  if (value >= 1073741824) return `${(value / 1073741824).toFixed(1)} ГБ`;
   if (value >= 1048576) return `${(value / 1048576).toFixed(1)} МБ`;
   if (value >= 1024) return `${Math.round(value / 1024)} КБ`;
-  return `${value} B`;
+  return `${value} Б`;
 }
 
 function renderRows(tbodyId, rows, columns, renderer) {

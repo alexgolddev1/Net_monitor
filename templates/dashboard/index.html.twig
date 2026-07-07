@@ -91,15 +91,15 @@ const dashboardApiUrl = {{ path('api_dashboard')|json_encode|raw }};
 function formatBytes(bytes) {
   const value = Number(bytes) || 0;
   if (value >= 1073741824) {
-    return `${(value / 1073741824).toFixed(1)} GB`;
+    return `${(value / 1073741824).toFixed(1)} ГБ`;
   }
   if (value >= 1048576) {
-    return `${Math.round(value / 1048576)} MB`;
+    return `${(value / 1048576).toFixed(1)} МБ`;
   }
   if (value >= 1024) {
-    return `${Math.round(value / 1024)} KB`;
+    return `${(value / 1024).toFixed(1)} КБ`;
   }
-  return `${value} B`;
+  return `${value} Б`;
 }
 
 function clearAndRender(tbody, rows) {

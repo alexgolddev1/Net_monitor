@@ -11,7 +11,7 @@
                 <tr>
                     <td>{{ row.fullName ?: "Не прив'язано" }}</td>
                     <td>{{ row.roomNumber }}</td>
-                    <td>{{ (row.totalBytes / 1048576)|number_format(1) }} МБ</td>
+                    <td>{{ row.totalBytes|format_bytes }}</td>
                 </tr>
             {% endfor %}
         </table>
@@ -24,7 +24,7 @@
                 <tr>
                     <td>{{ row.fullName ?: "Не прив'язано" }}</td>
                     <td>{{ row.roomNumber }}</td>
-                    <td>{{ (row.totalBytes / 1048576)|number_format(1) }} МБ</td>
+                    <td>{{ row.totalBytes|format_bytes }}</td>
                 </tr>
             {% endfor %}
         </table>

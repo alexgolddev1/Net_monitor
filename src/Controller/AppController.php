@@ -32,7 +32,7 @@ class AppController extends AbstractController
     {
     }
 
-    #[Route('/', name: 'home')]
+    #[Route('/admin', name: 'admin_home')]
     public function home(): Response
     {
         return $this->redirectToRoute('dashboard');

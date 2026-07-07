@@ -1,0 +1,62 @@
+{% extends 'base.html.twig' %}
+{% block title %}Запити змін{% endblock %}
+{% block heading %}Запити змін{% endblock %}
+{% block body %}
+<section class="panel">
+    <h2>Очікуючі запити</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Пристрій</th>
+                <th>Поточні дані</th>
+                <th>Нові дані</th>
+                <th>Створено</th>
+                <th>Дії</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in pendingRequests %}
+                {% set device = item.device %}
+                {% set client = device.client %}
+                <tr>
+                    <td>
+                        <div><a href="{{ path('device_show', {id: device.id}) }}">{{ device.mac }}</a></div>
+                        <div class="muted">{{ device.currentIp ?: '-' }}</div>
+                    </td>
+                    <td>
+                        {% if client %}
+                            <div>{{ client.displayName }}</div>
+                            <div class="muted">{{ client.roomNumber ?: '-' }}</div>
+                            <div class="muted">{{ client.phone ?: '-' }}</div>
+                            <div class="muted">{{ client.comment ?: '-' }}</div>
+                        {% else %}
+                            <span class="muted">Не прив'язано</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <div>{{ item.fullName ?: '-' }}</div>
+                        <div class="muted">{{ item.roomNumber ?: '-' }}</div>
+                        <div class="muted">{{ item.phone ?: '-' }}</div>
+                        <div class="muted">{{ item.comment ?: '-' }}</div>
+                    </td>
+                    <td>{{ item.createdAt|date('Y-m-d H:i') }}</td>
+                    <td>
+                        <form method="post" action="{{ path('admin_device_profile_request_approve', {id: item.id}) }}" style="display:grid; gap:8px; min-width:220px;">
+                            <input type="hidden" name="_csrf_token" value="{{ csrf_token('device_profile_request_' ~ item.id ~ '_approve') }}">
+                            <input type="text" name="review_note" placeholder="Примітка адміністратора">
+                            <button type="submit">Підтвердити</button>
+                        </form>
+                        <form method="post" action="{{ path('admin_device_profile_request_reject', {id: item.id}) }}" style="display:grid; gap:8px; min-width:220px; margin-top:8px;">
+                            <input type="hidden" name="_csrf_token" value="{{ csrf_token('device_profile_request_' ~ item.id ~ '_reject') }}">
+                            <input type="text" name="review_note" placeholder="Причина відхилення">
+                            <button type="submit" class="secondary">Відхилити</button>
+                        </form>
+                    </td>
+                </tr>
+            {% else %}
+                <tr><td colspan="5" class="muted">Немає очікуючих запитів</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endblock %}

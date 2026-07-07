@@ -48,62 +48,72 @@
     <aside class="sidebar">
         <div class="brand">{{ app_name }}</div>
         <nav class="nav">
-            <a href="{{ path('dashboard') }}">Панель</a>
-            <a href="{{ path('clients') }}">Клієнти</a>
-            <a href="{{ path('cabinets') }}">Кабінети</a>
-            <a href="{{ path('devices') }}">Пристрої</a>
-            <a href="{{ path('reports') }}">Звіти</a>
-            <a href="{{ path('app_logout') }}">Вийти</a>
+            {% if is_granted('ROLE_ADMIN') %}
+                <a href="{{ path('dashboard') }}">Панель</a>
+                <a href="{{ path('clients') }}">Клієнти</a>
+                <a href="{{ path('cabinets') }}">Кабінети</a>
+                <a href="{{ path('devices') }}">Пристрої</a>
+                <a href="{{ path('reports') }}">Звіти</a>
+                <a href="{{ path('admin_device_profile_requests') }}">Запити змін</a>
+                <a href="{{ path('app_logout') }}">Вийти</a>
+            {% else %}
+                <a href="{{ path('home') }}">Перевірка пристрою</a>
+                <a href="{{ path('app_login') }}">Вхід адміністратора</a>
+            {% endif %}
         </nav>
     </aside>
     <main class="content">
         <div class="topbar">
             <h1>{% block heading %}{{ app_name }}{% endblock %}</h1>
-            <div class="topbar-actions">
-                <span class="muted">MikroTik + моніторинг трафіку</span>
-                <div class="cache-actions">
-                    <form method="post" action="{{ path('clients_refresh') }}">
-                        <input type="hidden" name="_csrf_token" value="{{ csrf_token('clients_refresh') }}">
-                        <button type="submit" class="btn secondary">Оновити клієнтів</button>
-                    </form>
-                    <div class="cache-meta">
-                        Оновлено:
-                        {% if page_cache.clientsCacheUpdatedAt() %}
-                            {{ page_cache.clientsCacheUpdatedAt()|date('Y-m-d H:i') }}
-                        {% else %}
-                            ще не оновлено
-                        {% endif %}
+            {% if is_granted('ROLE_ADMIN') %}
+                <div class="topbar-actions">
+                    <span class="muted">MikroTik + моніторинг трафіку</span>
+                    <div class="cache-actions">
+                        <form method="post" action="{{ path('clients_refresh') }}">
+                            <input type="hidden" name="_csrf_token" value="{{ csrf_token('clients_refresh') }}">
+                            <button type="submit" class="btn secondary">Оновити клієнтів</button>
+                        </form>
+                        <div class="cache-meta">
+                            Оновлено:
+                            {% if page_cache.clientsCacheUpdatedAt() %}
+                                {{ page_cache.clientsCacheUpdatedAt()|date('Y-m-d H:i') }}
+                            {% else %}
+                                ще не оновлено
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div class="cache-actions">
+                        <form method="post" action="{{ path('devices_refresh') }}">
+                            <input type="hidden" name="_csrf_token" value="{{ csrf_token('devices_refresh') }}">
+                            <button type="submit" class="btn secondary">Оновити пристрої</button>
+                        </form>
+                        <div class="cache-meta">
+                            Оновлено:
+                            {% if page_cache.devicesCacheUpdatedAt() %}
+                                {{ page_cache.devicesCacheUpdatedAt()|date('Y-m-d H:i') }}
+                            {% else %}
+                                ще не оновлено
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div class="cache-actions">
+                        <form method="post" action="{{ path('dashboard_refresh') }}">
+                            <input type="hidden" name="_csrf_token" value="{{ csrf_token('dashboard_refresh') }}">
+                            <button type="submit" class="btn secondary">Оновити кеш дашборда</button>
+                        </form>
+                        <div class="cache-meta">
+                            Оновлено:
+                            {% if dashboard_cache.cacheUpdatedAt() %}
+                                {{ dashboard_cache.cacheUpdatedAt()|date('Y-m-d H:i') }}
+                            {% else %}
+                                ще не оновлено
+                            {% endif %}
+                        </div>
                     </div>
                 </div>
-                <div class="cache-actions">
-                    <form method="post" action="{{ path('devices_refresh') }}">
-                        <input type="hidden" name="_csrf_token" value="{{ csrf_token('devices_refresh') }}">
-                        <button type="submit" class="btn secondary">Оновити пристрої</button>
-                    </form>
-                    <div class="cache-meta">
-                        Оновлено:
-                        {% if page_cache.devicesCacheUpdatedAt() %}
-                            {{ page_cache.devicesCacheUpdatedAt()|date('Y-m-d H:i') }}
-                        {% else %}
-                            ще не оновлено
-                        {% endif %}
-                    </div>
-                </div>
-                <div class="cache-actions">
-                    <form method="post" action="{{ path('dashboard_refresh') }}">
-                        <input type="hidden" name="_csrf_token" value="{{ csrf_token('dashboard_refresh') }}">
-                        <button type="submit" class="btn secondary">Оновити кеш дашборда</button>
-                    </form>
-                    <div class="cache-meta">
-                        Оновлено:
-                        {% if dashboard_cache.cacheUpdatedAt() %}
-                            {{ dashboard_cache.cacheUpdatedAt()|date('Y-m-d H:i') }}
-                        {% else %}
-                            ще не оновлено
-                        {% endif %}
-                    </div>
-                </div>
-            </div>
+            {% else %}
+                <div class="muted">Публічна перевірка пристрою</div>
+            {% endif %}
         </div>
         {% for message in app.flashes('success') %}
             <div class="flash">{{ message }}</div>

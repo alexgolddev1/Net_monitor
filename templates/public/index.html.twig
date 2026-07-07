@@ -1,0 +1,94 @@
+{% extends 'base.html.twig' %}
+{% block title %}Перевірка пристрою{% endblock %}
+{% block heading %}Перевірка пристрою{% endblock %}
+{% block body %}
+<div class="grid two">
+    <section class="panel">
+        <h2>Знайти пристрій</h2>
+        <form method="get" style="display:grid; gap:10px;">
+            <label>IP або MAC</label>
+            <input name="identifier" value="{{ identifier }}" placeholder="192.168.0.10 або A8:41:F4:60:22:A7">
+            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                <button type="submit">Показати статистику</button>
+                {% if device %}
+                    <a class="btn secondary" href="{{ path('home') }}">Очистити</a>
+                {% endif %}
+            </div>
+        </form>
+
+        {% if message %}
+            <div class="flash" style="margin-top:12px;">{{ message }}</div>
+        {% endif %}
+
+        {% if device %}
+            <div class="grid stats" style="margin-top:16px;">
+                <div class="stat"><div class="muted">MAC</div><div class="value">{{ device.mac }}</div></div>
+                <div class="stat"><div class="muted">IP</div><div class="value">{{ device.currentIp ?: '-' }}</div></div>
+                <div class="stat"><div class="muted">Завантажено</div><div class="value">{{ deviceDetail.todayDownload|format_bytes }}</div></div>
+                <div class="stat"><div class="muted">Вигружено</div><div class="value">{{ deviceDetail.todayUpload|format_bytes }}</div></div>
+            </div>
+
+            <div class="muted" style="margin-top:8px;">
+                {% if device.client %}
+                    Поточні дані: {{ device.client.displayName }}{% if device.client.roomNumber %}, кімната {{ device.client.roomNumber }}{% endif %}
+                {% else %}
+                    Клієнт не прив'язаний
+                {% endif %}
+            </div>
+        {% endif %}
+    </section>
+
+    <section class="panel">
+        <h2>Змінити персональні дані</h2>
+        {% if device %}
+            <form method="post" style="display:grid; gap:10px;">
+                <input type="hidden" name="_csrf_token" value="{{ csrf_token('public_device_profile_request') }}">
+                <input type="hidden" name="device_id" value="{{ device.id }}">
+                <input type="hidden" name="identifier" value="{{ identifier }}">
+                <div class="form-grid">
+                    <div>
+                        <label>ПІБ</label>
+                        <input name="full_name" value="{{ device.client ? device.client.fullName : '' }}" placeholder="Наприклад, Іван Петренко">
+                    </div>
+                    <div>
+                        <label>Кімната</label>
+                        <input name="room_number" value="{{ device.client ? device.client.roomNumber : '' }}" placeholder="Наприклад, 101">
+                    </div>
+                    <div>
+                        <label>Телефон</label>
+                        <input name="phone" value="{{ device.client ? device.client.phone : '' }}" placeholder="+380...">
+                    </div>
+                    <div>
+                        <label>Коментар</label>
+                        <input name="comment" value="{{ device.client ? device.client.comment : '' }}" placeholder="Додаткова примітка">
+                    </div>
+                </div>
+                <div class="muted">Зміни будуть застосовані тільки після підтвердження адміністратором.</div>
+                <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                    <button type="submit">Надіслати на підтвердження</button>
+                </div>
+            </form>
+
+            {% if pendingRequests is not empty %}
+                <div style="margin-top:18px;">
+                    <h2>Очікує підтвердження</h2>
+                    <table>
+                        <tr><th>ПІБ</th><th>Кімната</th><th>Телефон</th><th>Коментар</th><th>Створено</th></tr>
+                        {% for item in pendingRequests %}
+                            <tr>
+                                <td>{{ item.fullName ?: '-' }}</td>
+                                <td>{{ item.roomNumber ?: '-' }}</td>
+                                <td>{{ item.phone ?: '-' }}</td>
+                                <td>{{ item.comment ?: '-' }}</td>
+                                <td>{{ item.createdAt|date('Y-m-d H:i') }}</td>
+                            </tr>
+                        {% endfor %}
+                    </table>
+                </div>
+            {% endif %}
+        {% else %}
+            <div class="muted">Введіть IP або MAC, щоб побачити статистику та відправити правки.</div>
+        {% endif %}
+    </section>
+</div>
+{% endblock %}

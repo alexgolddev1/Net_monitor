@@ -13,10 +13,10 @@
             <td>{{ row.client.roomNumber }}</td>
             <td>{{ row.client.phone }}</td>
             <td>{{ row.deviceCount }}</td>
-            <td>{{ (row.today / 1048576)|number_format(1) }} МБ</td>
-            <td>{{ (row.todayDownload / 1048576)|number_format(1) }} МБ</td>
-            <td>{{ (row.todayUpload / 1048576)|number_format(1) }} МБ</td>
-            <td>{{ (row.month / 1048576)|number_format(1) }} МБ</td>
+            <td>{{ row.today|format_bytes }}</td>
+            <td>{{ row.todayDownload|format_bytes }}</td>
+            <td>{{ row.todayUpload|format_bytes }}</td>
+            <td>{{ row.month|format_bytes }}</td>
             <td>{{ row.lastSeen ? row.lastSeen|date('Y-m-d H:i') : '-' }}</td>
             <td>
                 <div style="display:flex; gap:8px; flex-wrap:wrap;">
