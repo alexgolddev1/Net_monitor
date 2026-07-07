@@ -72,6 +72,8 @@ class TrafficAggregator
             ]
         );
 
+        $this->upsertHourlyGraphUsageByDateRange($start, $end);
+
         $this->em->flush();
 
         return count($rows);
@@ -227,7 +229,183 @@ class TrafficAggregator
             $params
         );
 
+        $this->upsertHourlyGraphUsageByFlowRange($fromFlowId, $toFlowId);
+
         return $processed;
+    }
+
+    private function upsertHourlyGraphUsageByDateRange(\DateTimeImmutable $start, \DateTimeImmutable $end): void
+    {
+        $params = [
+            'start' => $start->format('Y-m-d H:i:s'),
+            'end' => $end->format('Y-m-d H:i:s'),
+        ];
+
+        $this->connection->executeStatement(
+            "INSERT INTO traffic_hourly_usage (bucket_at, scope_type, scope_id, download_bytes, upload_bytes, total_bytes)
+             SELECT DATE_FORMAT(received_at, '%Y-%m-%d %H:00:00') bucketAt,
+                    'all' scopeType,
+                    0 scopeId,
+                    SUM(CASE WHEN direction = 'download' THEN COALESCE(bytes, 0) ELSE 0 END) downloadBytes,
+                    SUM(CASE WHEN direction = 'upload' THEN COALESCE(bytes, 0) ELSE 0 END) uploadBytes,
+                    SUM(COALESCE(bytes, 0)) totalBytes
+             FROM network_flow
+             WHERE received_at BETWEEN :start AND :end
+             GROUP BY bucketAt
+             ON DUPLICATE KEY UPDATE
+                download_bytes = VALUES(download_bytes),
+                upload_bytes = VALUES(upload_bytes),
+                total_bytes = VALUES(total_bytes)",
+            $params
+        );
+
+        $this->connection->executeStatement(
+            "INSERT INTO traffic_hourly_usage (bucket_at, scope_type, scope_id, download_bytes, upload_bytes, total_bytes)
+             SELECT resolved.bucketAt,
+                    'device' scopeType,
+                    resolved.deviceId scopeId,
+                    SUM(CASE WHEN resolved.direction = 'download' THEN COALESCE(resolved.bytes, 0) ELSE 0 END) downloadBytes,
+                    SUM(CASE WHEN resolved.direction = 'upload' THEN COALESCE(resolved.bytes, 0) ELSE 0 END) uploadBytes,
+                    SUM(COALESCE(resolved.bytes, 0)) totalBytes
+             FROM (
+                 SELECT DATE_FORMAT(f.received_at, '%Y-%m-%d %H:00:00') bucketAt,
+                        COALESCE(f.device_id, d.id) deviceId,
+                        f.direction,
+                        f.bytes
+                 FROM network_flow f
+                 LEFT JOIN device d ON f.device_id IS NULL AND (
+                     (f.direction = 'upload' AND d.current_ip = f.src_ip)
+                     OR (f.direction = 'download' AND d.current_ip = COALESCE(f.post_nat_dst_ip, f.dst_ip))
+                 )
+                 WHERE f.received_at BETWEEN :start AND :end
+             ) resolved
+             WHERE resolved.deviceId IS NOT NULL
+             GROUP BY resolved.bucketAt, resolved.deviceId
+             ON DUPLICATE KEY UPDATE
+                download_bytes = VALUES(download_bytes),
+                upload_bytes = VALUES(upload_bytes),
+                total_bytes = VALUES(total_bytes)",
+            $params
+        );
+
+        $this->connection->executeStatement(
+            "INSERT INTO traffic_hourly_usage (bucket_at, scope_type, scope_id, download_bytes, upload_bytes, total_bytes)
+             SELECT resolved.bucketAt,
+                    'client' scopeType,
+                    d.client_id scopeId,
+                    SUM(CASE WHEN resolved.direction = 'download' THEN COALESCE(resolved.bytes, 0) ELSE 0 END) downloadBytes,
+                    SUM(CASE WHEN resolved.direction = 'upload' THEN COALESCE(resolved.bytes, 0) ELSE 0 END) uploadBytes,
+                    SUM(COALESCE(resolved.bytes, 0)) totalBytes
+             FROM (
+                 SELECT DATE_FORMAT(f.received_at, '%Y-%m-%d %H:00:00') bucketAt,
+                        COALESCE(f.device_id, d.id) deviceId,
+                        f.direction,
+                        f.bytes
+                 FROM network_flow f
+                 LEFT JOIN device d ON f.device_id IS NULL AND (
+                     (f.direction = 'upload' AND d.current_ip = f.src_ip)
+                     OR (f.direction = 'download' AND d.current_ip = COALESCE(f.post_nat_src_ip, f.post_nat_dst_ip, f.dst_ip))
+                 )
+                 WHERE f.received_at BETWEEN :start AND :end
+             ) resolved
+             INNER JOIN device d ON d.id = resolved.deviceId
+             WHERE d.client_id IS NOT NULL
+             GROUP BY resolved.bucketAt, d.client_id
+             ON DUPLICATE KEY UPDATE
+                download_bytes = VALUES(download_bytes),
+                upload_bytes = VALUES(upload_bytes),
+                total_bytes = VALUES(total_bytes)",
+            $params
+        );
+    }
+
+    private function upsertHourlyGraphUsageByFlowRange(int $fromFlowId, int $toFlowId): void
+    {
+        if ($toFlowId <= $fromFlowId) {
+            return;
+        }
+
+        $params = [
+            'fromId' => $fromFlowId,
+            'toId' => $toFlowId,
+        ];
+
+        $this->connection->executeStatement(
+            "INSERT INTO traffic_hourly_usage (bucket_at, scope_type, scope_id, download_bytes, upload_bytes, total_bytes)
+             SELECT DATE_FORMAT(received_at, '%Y-%m-%d %H:00:00') bucketAt,
+                    'all' scopeType,
+                    0 scopeId,
+                    SUM(CASE WHEN direction = 'download' THEN COALESCE(bytes, 0) ELSE 0 END) downloadBytes,
+                    SUM(CASE WHEN direction = 'upload' THEN COALESCE(bytes, 0) ELSE 0 END) uploadBytes,
+                    SUM(COALESCE(bytes, 0)) totalBytes
+             FROM network_flow
+             WHERE id > :fromId AND id <= :toId
+             GROUP BY bucketAt
+             ON DUPLICATE KEY UPDATE
+                download_bytes = VALUES(download_bytes),
+                upload_bytes = VALUES(upload_bytes),
+                total_bytes = VALUES(total_bytes)",
+            $params
+        );
+
+        $this->connection->executeStatement(
+            "INSERT INTO traffic_hourly_usage (bucket_at, scope_type, scope_id, download_bytes, upload_bytes, total_bytes)
+             SELECT resolved.bucketAt,
+                    'device' scopeType,
+                    resolved.deviceId scopeId,
+                    SUM(CASE WHEN resolved.direction = 'download' THEN COALESCE(resolved.bytes, 0) ELSE 0 END) downloadBytes,
+                    SUM(CASE WHEN resolved.direction = 'upload' THEN COALESCE(resolved.bytes, 0) ELSE 0 END) uploadBytes,
+                    SUM(COALESCE(resolved.bytes, 0)) totalBytes
+             FROM (
+                 SELECT DATE_FORMAT(f.received_at, '%Y-%m-%d %H:00:00') bucketAt,
+                        COALESCE(f.device_id, d.id) deviceId,
+                        f.direction,
+                        f.bytes
+                 FROM network_flow f
+                 LEFT JOIN device d ON f.device_id IS NULL AND (
+                     (f.direction = 'upload' AND d.current_ip = f.src_ip)
+                     OR (f.direction = 'download' AND d.current_ip = COALESCE(f.post_nat_dst_ip, f.dst_ip))
+                 )
+                 WHERE f.id > :fromId AND f.id <= :toId
+             ) resolved
+             WHERE resolved.deviceId IS NOT NULL
+             GROUP BY resolved.bucketAt, resolved.deviceId
+             ON DUPLICATE KEY UPDATE
+                download_bytes = VALUES(download_bytes),
+                upload_bytes = VALUES(upload_bytes),
+                total_bytes = VALUES(total_bytes)",
+            $params
+        );
+
+        $this->connection->executeStatement(
+            "INSERT INTO traffic_hourly_usage (bucket_at, scope_type, scope_id, download_bytes, upload_bytes, total_bytes)
+             SELECT resolved.bucketAt,
+                    'client' scopeType,
+                    d.client_id scopeId,
+                    SUM(CASE WHEN resolved.direction = 'download' THEN COALESCE(resolved.bytes, 0) ELSE 0 END) downloadBytes,
+                    SUM(CASE WHEN resolved.direction = 'upload' THEN COALESCE(resolved.bytes, 0) ELSE 0 END) uploadBytes,
+                    SUM(COALESCE(resolved.bytes, 0)) totalBytes
+             FROM (
+                 SELECT DATE_FORMAT(f.received_at, '%Y-%m-%d %H:00:00') bucketAt,
+                        COALESCE(f.device_id, d.id) deviceId,
+                        f.direction,
+                        f.bytes
+                 FROM network_flow f
+                 LEFT JOIN device d ON f.device_id IS NULL AND (
+                     (f.direction = 'upload' AND d.current_ip = f.src_ip)
+                     OR (f.direction = 'download' AND d.current_ip = COALESCE(f.post_nat_src_ip, f.post_nat_dst_ip, f.dst_ip))
+                 )
+                 WHERE f.id > :fromId AND f.id <= :toId
+             ) resolved
+             INNER JOIN device d ON d.id = resolved.deviceId
+             WHERE d.client_id IS NOT NULL
+             GROUP BY resolved.bucketAt, d.client_id
+             ON DUPLICATE KEY UPDATE
+                download_bytes = VALUES(download_bytes),
+                upload_bytes = VALUES(upload_bytes),
+                total_bytes = VALUES(total_bytes)",
+            $params
+        );
     }
 
     private function aggregationStateLastFlowId(): int
