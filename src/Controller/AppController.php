@@ -8,6 +8,7 @@ use App\Entity\DeviceDailyUsage;
 use App\Entity\DeviceIpHistory;
 use App\Entity\NetworkFlow;
 use App\Service\ApplicationLabelResolver;
+use App\Service\MikroTikClient;
 use App\Service\PageCacheService;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
@@ -22,6 +23,7 @@ class AppController extends AbstractController
         private readonly EntityManagerInterface $em,
         private readonly ApplicationLabelResolver $applicationLabelResolver,
         private readonly PageCacheService $pageCache,
+        private readonly MikroTikClient $mikroTikClient,
     )
     {
     }
@@ -135,9 +137,11 @@ class AppController extends AbstractController
             throw $this->createAccessDeniedException('Invalid CSRF token.');
         }
 
+        $synced = $this->mikroTikClient->syncLeases();
         $counts = $this->pageCache->refreshDevices();
         $this->addFlash('success', sprintf(
-            'Devices refreshed. Devices: %d.',
+            'Devices refreshed. Synced leases: %d. Devices: %d.',
+            $synced,
             $counts['devices'],
         ));
 
