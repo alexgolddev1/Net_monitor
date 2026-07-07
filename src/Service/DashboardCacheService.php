@@ -269,6 +269,7 @@ class DashboardCacheService
                 c.id,
                 c.full_name fullName,
                 c.room_number roomNumber,
+                c.comment comment,
                 COALESCE(SUM(u.total_bytes), 0) totalBytes,
                 COALESCE(SUM(u.bytes_in), 0) downloadBytes,
                 COALESCE(SUM(u.bytes_out), 0) uploadBytes
@@ -276,7 +277,7 @@ class DashboardCacheService
              INNER JOIN device d ON d.id = u.device_id
              INNER JOIN client c ON c.id = d.client_id
              WHERE u.date = :today
-             GROUP BY c.id, c.full_name, c.room_number
+             GROUP BY c.id, c.full_name, c.room_number, c.comment
              ORDER BY totalBytes DESC
              LIMIT 10',
             ['today' => $today]
@@ -287,6 +288,7 @@ class DashboardCacheService
             'fullName' => $row['fullName'],
             'displayName' => $row['fullName'] ?: 'Клієнт #'.$row['id'],
             'roomNumber' => $row['roomNumber'],
+            'comment' => $row['comment'] ?? null,
             'today' => (int) $row['totalBytes'],
             'todayDownload' => (int) $row['downloadBytes'],
             'todayUpload' => (int) $row['uploadBytes'],

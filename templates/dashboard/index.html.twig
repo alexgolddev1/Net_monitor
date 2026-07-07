@@ -30,9 +30,9 @@
     <section class="panel">
         <h2>Топ клієнтів за сьогодні</h2>
         <table>
-            <thead><tr><th>Клієнт</th><th>Кімната</th><th>Усього</th><th>Вхідний</th><th>Вихідний</th></tr></thead>
+            <thead><tr><th>Клієнт</th><th>Кімната</th><th>Коментар</th><th>Усього</th><th>Вхідний</th><th>Вихідний</th></tr></thead>
             <tbody id="top-clients-body">
-                <tr><td colspan="5" class="muted">Завантаження...</td></tr>
+                <tr><td colspan="6" class="muted">Завантаження...</td></tr>
             </tbody>
         </table>
     </section>
@@ -158,6 +158,7 @@ function renderTopClients(rows) {
     const line = document.createElement('tr');
     line.appendChild(linkCell(row.displayName || '-', `/clients/${row.id}`));
     line.appendChild(textCell(row.roomNumber || '-'));
+    line.appendChild(textCell(row.comment || '-'));
     line.appendChild(textCell(formatBytes(row.today)));
     line.appendChild(textCell(formatBytes(row.todayDownload)));
     line.appendChild(textCell(formatBytes(row.todayUpload)));

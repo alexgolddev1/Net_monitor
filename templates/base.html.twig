@@ -15,6 +15,8 @@
         .brand { font-size:20px; font-weight:700; margin-bottom:24px; }
         .nav a { display:block; color:#d1d5db; padding:10px 12px; border-radius:6px; margin-bottom:4px; }
         .nav a:hover { background:#1f2937; color:#fff; }
+        .nav-item { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+        .nav-badge { display:inline-flex; align-items:center; justify-content:center; min-width:22px; height:22px; padding:0 6px; border-radius:999px; background:#f59e0b; color:#111827; font-size:12px; font-weight:800; line-height:1; }
         .content { padding:24px; min-width:0; }
         .topbar { display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; gap:16px; }
         .topbar-actions { display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:flex-end; }
@@ -66,16 +68,22 @@
         <div class="brand">{{ app_name }}</div>
         <nav class="nav">
             {% if is_granted('ROLE_ADMIN') %}
-                <a href="{{ path('dashboard') }}">Панель</a>
-                <a href="{{ path('clients') }}">Клієнти</a>
-                <a href="{{ path('cabinets') }}">Кабінети</a>
-                <a href="{{ path('devices') }}">Пристрої</a>
-                <a href="{{ path('reports') }}">Звіти</a>
-                <a href="{{ path('admin_device_profile_requests') }}">Запити змін</a>
-                <a href="{{ path('app_logout') }}">Вийти</a>
+                <a href="{{ path('dashboard') }}" class="nav-item"><span>Панель</span></a>
+                <a href="{{ path('clients') }}" class="nav-item"><span>Клієнти</span></a>
+                <a href="{{ path('cabinets') }}" class="nav-item"><span>Кабінети</span></a>
+                <a href="{{ path('devices') }}" class="nav-item"><span>Пристрої</span></a>
+                <a href="{{ path('reports') }}" class="nav-item"><span>Звіти</span></a>
+                {% set pendingProfileRequestsCount = pending_device_profile_requests_count() %}
+                <a href="{{ path('admin_device_profile_requests') }}" class="nav-item">
+                    <span>Запити змін</span>
+                    {% if pendingProfileRequestsCount > 0 %}
+                        <span class="nav-badge">{{ pendingProfileRequestsCount }}</span>
+                    {% endif %}
+                </a>
+                <a href="{{ path('app_logout') }}" class="nav-item"><span>Вийти</span></a>
             {% else %}
-                <a href="{{ path('home') }}">Перевірка пристрою</a>
-                <a href="{{ path('app_login') }}">Авторизація</a>
+                <a href="{{ path('home') }}" class="nav-item"><span>Перевірка пристрою</span></a>
+                <a href="{{ path('app_login') }}" class="nav-item"><span>Авторизація</span></a>
             {% endif %}
         </nav>
     </aside>
