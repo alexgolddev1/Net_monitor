@@ -522,44 +522,39 @@ class ApiController extends AbstractController
         ];
 
         $sql = "SELECT resolved.deviceId,
-                       resolved.mac,
-                       resolved.hostname,
-                       resolved.currentIp,
-                       resolved.clientId,
-                       resolved.clientFullName,
-                       resolved.clientRoomNumber,
+                       d.mac,
+                       d.hostname,
+                       d.current_ip currentIp,
+                       c.id clientId,
+                       c.full_name clientFullName,
+                       c.room_number clientRoomNumber,
                        SUM(CASE WHEN resolved.direction = 'download' THEN COALESCE(resolved.bytes, 0) ELSE 0 END) downloadBytes,
                        SUM(CASE WHEN resolved.direction = 'upload' THEN COALESCE(resolved.bytes, 0) ELSE 0 END) uploadBytes
                 FROM (
                     SELECT COALESCE(f.device_id, d.id) deviceId,
-                           d.mac,
-                           d.hostname,
-                           d.current_ip currentIp,
-                           c.id clientId,
-                           c.full_name clientFullName,
-                           c.room_number clientRoomNumber,
                            f.direction,
                            f.bytes
                     FROM network_flow f
-                    LEFT JOIN device d ON d.id = f.device_id OR (f.device_id IS NULL AND (
+                    LEFT JOIN device d ON f.device_id IS NULL AND (
                         (f.direction = 'upload' AND d.current_ip = f.src_ip)
                         OR (f.direction = 'download' AND d.current_ip = COALESCE(f.post_nat_dst_ip, f.dst_ip))
-                    ))
-                    LEFT JOIN client c ON c.id = d.client_id
+                    )
                     WHERE f.received_at >= :start
                       AND f.received_at < :end
                 ) resolved
-                WHERE resolved.deviceId IS NOT NULL";
+                INNER JOIN device d ON d.id = resolved.deviceId
+                LEFT JOIN client c ON c.id = d.client_id
+                WHERE 1=1";
 
         if ($scopeType === 'device' && $scopeId !== null) {
             $sql .= ' AND resolved.deviceId = :scopeId';
             $params['scopeId'] = $scopeId;
         } elseif ($scopeType === 'client' && $scopeId !== null) {
-            $sql .= ' AND resolved.clientId = :scopeId';
+            $sql .= ' AND c.id = :scopeId';
             $params['scopeId'] = $scopeId;
         }
 
-        $sql .= ' GROUP BY resolved.deviceId, resolved.mac, resolved.hostname, resolved.currentIp, resolved.clientId, resolved.clientFullName, resolved.clientRoomNumber ORDER BY (downloadBytes + uploadBytes) DESC LIMIT 20';
+        $sql .= ' GROUP BY resolved.deviceId, d.mac, d.hostname, d.current_ip, c.id, c.full_name, c.room_number ORDER BY (downloadBytes + uploadBytes) DESC LIMIT 20';
 
         return $this->em->getConnection()->fetchAllAssociative($sql, $params);
     }
