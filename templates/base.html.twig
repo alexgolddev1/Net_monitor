@@ -89,6 +89,20 @@
                         {% endif %}
                     </div>
                 </div>
+                <div class="cache-actions">
+                    <form method="post" action="{{ path('dashboard_refresh') }}">
+                        <input type="hidden" name="_csrf_token" value="{{ csrf_token('dashboard_refresh') }}">
+                        <button type="submit" class="btn secondary">Оновити кеш дашборда</button>
+                    </form>
+                    <div class="cache-meta">
+                        Оновлено:
+                        {% if dashboard_cache.cacheUpdatedAt() %}
+                            {{ dashboard_cache.cacheUpdatedAt()|date('Y-m-d H:i') }}
+                        {% else %}
+                            ще не оновлено
+                        {% endif %}
+                    </div>
+                </div>
             </div>
         </div>
         {% for message in app.flashes('success') %}

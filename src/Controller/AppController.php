@@ -9,7 +9,9 @@ use App\Entity\DeviceIpHistory;
 use App\Entity\NetworkFlow;
 use App\Service\ApplicationLabelResolver;
 use App\Service\MikroTikClient;
+use App\Service\DashboardCacheService;
 use App\Service\PageCacheService;
+use App\Service\TrafficAggregator;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\Request;
@@ -22,8 +24,10 @@ class AppController extends AbstractController
     public function __construct(
         private readonly EntityManagerInterface $em,
         private readonly ApplicationLabelResolver $applicationLabelResolver,
+        private readonly DashboardCacheService $dashboardCache,
         private readonly PageCacheService $pageCache,
         private readonly MikroTikClient $mikroTikClient,
+        private readonly TrafficAggregator $trafficAggregator,
     )
     {
     }
@@ -146,6 +150,24 @@ class AppController extends AbstractController
         ));
 
         return $this->redirect($request->headers->get('referer') ?: $this->generateUrl('devices'));
+    }
+
+    #[Route('/dashboard/refresh', name: 'dashboard_refresh', methods: ['POST'])]
+    public function refreshDashboard(Request $request): Response
+    {
+        if (!$this->isCsrfTokenValid('dashboard_refresh', (string) $request->request->get('_csrf_token'))) {
+            throw $this->createAccessDeniedException('Invalid CSRF token.');
+        }
+
+        $synced = $this->trafficAggregator->aggregateIncremental();
+        $payload = $this->dashboardCache->refreshPayload();
+        $this->addFlash('success', sprintf(
+            'Dashboard cache refreshed. Synced flow rows: %d. Traffic today: %d bytes.',
+            $synced,
+            (int) ($payload['todayTraffic'] ?? 0),
+        ));
+
+        return $this->redirect($request->headers->get('referer') ?: $this->generateUrl('dashboard'));
     }
 
     #[Route('/clients', name: 'client_create', methods: ['POST'])]

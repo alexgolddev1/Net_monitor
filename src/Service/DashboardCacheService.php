@@ -41,6 +41,16 @@ class DashboardCacheService
         return $payload;
     }
 
+    public function cacheUpdatedAt(): ?\DateTimeImmutable
+    {
+        $modifiedAt = @filemtime($this->cachePath());
+        if ($modifiedAt === false) {
+            return null;
+        }
+
+        return (new \DateTimeImmutable())->setTimestamp($modifiedAt);
+    }
+
     private function buildPayload(): array
     {
         $today = $this->todayDateParameter();
