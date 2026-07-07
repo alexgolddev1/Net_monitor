@@ -96,6 +96,16 @@ class TrafficAggregator
         return $processed;
     }
 
+    public function refreshRecentHourlyGraphUsage(int $hours = 48): void
+    {
+        $hours = max(1, $hours);
+        $end = new \DateTimeImmutable('now');
+        $startBase = $end->modify('-'.($hours - 1).' hours');
+        $start = $startBase->setTime((int) $startBase->format('H'), 0, 0);
+
+        $this->upsertHourlyGraphUsageByDateRange($start, $end);
+    }
+
     private function aggregateFlowRange(int $fromFlowId, int $toFlowId): int
     {
         if ($toFlowId <= $fromFlowId) {

@@ -7,6 +7,7 @@ use App\Entity\Device;
 use App\Service\DashboardCacheService;
 use App\Service\MikroTikClient;
 use App\Service\PageCacheService;
+use App\Service\TrafficAggregator;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\JsonResponse;
@@ -21,6 +22,7 @@ class ApiController extends AbstractController
         private readonly DashboardCacheService $dashboardCache,
         private readonly PageCacheService $pageCache,
         private readonly MikroTikClient $mikroTikClient,
+        private readonly TrafficAggregator $trafficAggregator,
     )
     {
     }
@@ -182,26 +184,12 @@ class ApiController extends AbstractController
         $startBase = $end->modify('-'.($hours - 1).' hours');
         $start = $startBase->setTime((int) $startBase->format('H'), 0, 0);
 
-        if (!$this->trafficHourlyUsageTableExists()) {
-            return $this->emptyTrafficSeriesPayload($hours, $label, 'hour', $filterLabel, $start, $end);
+        if ($this->trafficHourlyUsageTableExists()) {
+            $this->trafficAggregator->refreshRecentHourlyGraphUsage(max($hours, 48));
+            $rows = $this->hourlyTrafficRowsFromRollups($start, $end, $scopeType, $scopeId);
+        } else {
+            $rows = $this->hourlyTrafficRowsFromFlows($start, $end, $scopeType, $scopeId);
         }
-
-        $params = [
-            'start' => $start->format('Y-m-d H:i:s'),
-            'end' => $end->format('Y-m-d H:i:s'),
-            'scopeType' => $scopeType,
-            'scopeId' => $scopeId ?? 0,
-        ];
-
-        $where = 'bucket_at BETWEEN :start AND :end AND scope_type = :scopeType AND scope_id = :scopeId';
-        $sql = 'SELECT bucket_at bucket,
-                download_bytes downloadBytes,
-                upload_bytes uploadBytes
-         FROM traffic_hourly_usage
-         WHERE '.$where.'
-         ORDER BY bucket ASC';
-
-        $rows = $this->em->getConnection()->fetchAllAssociative($sql, $params);
 
         $data = [];
         foreach ($rows as $row) {
@@ -225,6 +213,96 @@ class ApiController extends AbstractController
         }
 
         return $this->trafficSeriesPayload($label, $labels, $download, $upload, 'hour', $start, $end, $filterLabel);
+    }
+
+    private function hourlyTrafficRowsFromRollups(\DateTimeImmutable $start, \DateTimeImmutable $end, string $scopeType, ?int $scopeId): array
+    {
+        return $this->em->getConnection()->fetchAllAssociative(
+            'SELECT bucket_at bucket,
+                    download_bytes downloadBytes,
+                    upload_bytes uploadBytes
+             FROM traffic_hourly_usage
+             WHERE bucket_at BETWEEN :start AND :end
+               AND scope_type = :scopeType
+               AND scope_id = :scopeId
+             ORDER BY bucket ASC',
+            [
+                'start' => $start->format('Y-m-d H:i:s'),
+                'end' => $end->format('Y-m-d H:i:s'),
+                'scopeType' => $scopeType,
+                'scopeId' => $scopeId ?? 0,
+            ]
+        );
+    }
+
+    private function hourlyTrafficRowsFromFlows(\DateTimeImmutable $start, \DateTimeImmutable $end, string $scopeType, ?int $scopeId): array
+    {
+        $params = [
+            'start' => $start->format('Y-m-d H:i:s'),
+            'end' => $end->format('Y-m-d H:i:s'),
+        ];
+
+        if ($scopeType === 'device' && $scopeId !== null) {
+            $params['scopeId'] = $scopeId;
+            return $this->em->getConnection()->fetchAllAssociative(
+                "SELECT resolved.bucketAt bucket,
+                        SUM(CASE WHEN resolved.direction = 'download' THEN COALESCE(resolved.bytes, 0) ELSE 0 END) downloadBytes,
+                        SUM(CASE WHEN resolved.direction = 'upload' THEN COALESCE(resolved.bytes, 0) ELSE 0 END) uploadBytes
+                 FROM (
+                     SELECT DATE_FORMAT(f.received_at, '%Y-%m-%d %H:00:00') bucketAt,
+                            COALESCE(f.device_id, d.id) deviceId,
+                            f.direction,
+                            f.bytes
+                     FROM network_flow f
+                     LEFT JOIN device d ON f.device_id IS NULL AND (
+                         (f.direction = 'upload' AND d.current_ip = f.src_ip)
+                         OR (f.direction = 'download' AND d.current_ip = COALESCE(f.post_nat_dst_ip, f.dst_ip))
+                     )
+                     WHERE f.received_at BETWEEN :start AND :end
+                 ) resolved
+                 WHERE resolved.deviceId = :scopeId
+                 GROUP BY resolved.bucketAt
+                 ORDER BY bucket ASC",
+                $params
+            );
+        }
+
+        if ($scopeType === 'client' && $scopeId !== null) {
+            $params['scopeId'] = $scopeId;
+            return $this->em->getConnection()->fetchAllAssociative(
+                "SELECT resolved.bucketAt bucket,
+                        SUM(CASE WHEN resolved.direction = 'download' THEN COALESCE(resolved.bytes, 0) ELSE 0 END) downloadBytes,
+                        SUM(CASE WHEN resolved.direction = 'upload' THEN COALESCE(resolved.bytes, 0) ELSE 0 END) uploadBytes
+                 FROM (
+                     SELECT DATE_FORMAT(f.received_at, '%Y-%m-%d %H:00:00') bucketAt,
+                            COALESCE(f.device_id, d.id) deviceId,
+                            f.direction,
+                            f.bytes
+                     FROM network_flow f
+                     LEFT JOIN device d ON f.device_id IS NULL AND (
+                         (f.direction = 'upload' AND d.current_ip = f.src_ip)
+                         OR (f.direction = 'download' AND d.current_ip = COALESCE(f.post_nat_dst_ip, f.dst_ip))
+                     )
+                     WHERE f.received_at BETWEEN :start AND :end
+                 ) resolved
+                 INNER JOIN device d ON d.id = resolved.deviceId
+                 WHERE d.client_id = :scopeId
+                 GROUP BY resolved.bucketAt
+                 ORDER BY bucket ASC",
+                $params
+            );
+        }
+
+        return $this->em->getConnection()->fetchAllAssociative(
+            "SELECT DATE_FORMAT(received_at, '%Y-%m-%d %H:00:00') bucket,
+                    SUM(CASE WHEN direction = 'download' THEN COALESCE(bytes, 0) ELSE 0 END) downloadBytes,
+                    SUM(CASE WHEN direction = 'upload' THEN COALESCE(bytes, 0) ELSE 0 END) uploadBytes
+             FROM network_flow
+             WHERE received_at BETWEEN :start AND :end
+             GROUP BY bucket
+             ORDER BY bucket ASC",
+            $params
+        );
     }
 
     private function dailyTrafficSeries(int $days, string $label, string $scopeType = 'all', ?int $scopeId = null, ?string $filterLabel = null): array
