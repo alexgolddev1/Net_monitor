@@ -44,7 +44,10 @@
         </div>
         <div class="traffic-meta" style="margin-top:6px;">
             <div id="traffic-filter-label">Фільтр: усі дані</div>
-            <div id="traffic-live-state">Live-режим: вимкнено</div>
+            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                <div id="traffic-live-state">Live-режим: вимкнено</div>
+                <button type="button" class="btn secondary" id="traffic-live-toggle">Увімкнути live</button>
+            </div>
         </div>
 
         <div class="traffic-summary" style="margin-top:14px;">
@@ -68,6 +71,7 @@ const trafficState = {
   range: '12h',
   chart: null,
   refreshTimer: null,
+  liveEnabled: false,
 };
 
 const trafficElements = {
@@ -77,6 +81,7 @@ const trafficElements = {
   updated: document.getElementById('traffic-updated'),
   filterLabel: document.getElementById('traffic-filter-label'),
   liveState: document.getElementById('traffic-live-state'),
+  liveToggle: document.getElementById('traffic-live-toggle'),
   downloadTotal: document.getElementById('traffic-download-total'),
   uploadTotal: document.getElementById('traffic-upload-total'),
   total: document.getElementById('traffic-total'),
@@ -149,8 +154,9 @@ function syncFilterLabel(payload) {
 }
 
 function updateLiveState() {
-  const isLive = trafficState.range === '12h';
+  const isLive = trafficState.range === '12h' && trafficState.liveEnabled;
   trafficElements.liveState.textContent = isLive ? 'Live-режим: увімкнено' : 'Live-режим: вимкнено';
+  trafficElements.liveToggle.textContent = isLive ? 'Вимкнути live' : 'Увімкнути live';
 }
 
 function stopLiveRefresh() {
@@ -163,7 +169,7 @@ function stopLiveRefresh() {
 
 function startLiveRefresh() {
   stopLiveRefresh();
-  if (trafficState.range !== '12h') {
+  if (trafficState.range !== '12h' || !trafficState.liveEnabled) {
     return;
   }
   trafficState.refreshTimer = window.setInterval(() => {
@@ -260,7 +266,7 @@ async function loadTraffic(range, restartLive = true) {
   updateSummary(payload);
   updateChart(payload);
   if (restartLive) {
-    if (range === '12h') {
+    if (range === '12h' && trafficState.liveEnabled) {
       startLiveRefresh();
     } else {
       stopLiveRefresh();
@@ -286,6 +292,16 @@ trafficElements.client.addEventListener('change', () => {
     trafficElements.device.value = '';
   }
   loadTraffic(trafficState.range).catch((error) => console.warn('Traffic series reload failed', error));
+});
+
+trafficElements.liveToggle.addEventListener('click', () => {
+  trafficState.liveEnabled = !trafficState.liveEnabled;
+  updateLiveState();
+  if (trafficState.liveEnabled && trafficState.range === '12h') {
+    startLiveRefresh();
+  } else {
+    stopLiveRefresh();
+  }
 });
 
 createChart();
