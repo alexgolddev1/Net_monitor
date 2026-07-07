@@ -3,7 +3,7 @@ parameters:
   app.favicon_provider: '%env(FAVICON_PROVIDER)%'
   app.local_subnets: '%env(LOCAL_SUBNETS)%'
   app.own_wan_ips: '%env(OWN_WAN_IPS)%'
-  app.mikrotik_monitor_interface: '%env(default:ether1:MIKROTIK_MONITOR_INTERFACE)%'
+  app.mikrotik_monitor_interface: 'ether1'
 
 services:
   _defaults:
