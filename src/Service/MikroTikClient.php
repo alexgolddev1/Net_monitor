@@ -14,6 +14,7 @@ class MikroTikClient
         private readonly ClientResolver $resolver,
         private readonly LoggerInterface $logger,
         private readonly bool $mockNetworkData,
+        private readonly string $mikrotikMonitorInterface,
     ) {
     }
 
@@ -124,6 +125,32 @@ class MikroTikClient
         return $count;
     }
 
+    public function monitorTraffic(): array
+    {
+        $row = $this->mockNetworkData ? $this->mockMonitorTraffic() : $this->fetchMonitorTraffic();
+
+        if ($row === []) {
+            return $this->emptyMonitorTrafficPayload();
+        }
+
+        return [
+            'interface' => (string) ($row['name'] ?? $this->mikrotikMonitorInterface),
+            'rxPacketsPerSecond' => (int) ($row['rx-packets-per-second'] ?? 0),
+            'rxBitsPerSecond' => $this->normalizeRateValue($row['rx-bits-per-second'] ?? null),
+            'fpRxPacketsPerSecond' => (int) ($row['fp-rx-packets-per-second'] ?? 0),
+            'fpRxBitsPerSecond' => $this->normalizeRateValue($row['fp-rx-bits-per-second'] ?? null),
+            'rxDropsPerSecond' => (int) ($row['rx-drops-per-second'] ?? 0),
+            'rxErrorsPerSecond' => (int) ($row['rx-errors-per-second'] ?? 0),
+            'txPacketsPerSecond' => (int) ($row['tx-packets-per-second'] ?? 0),
+            'txBitsPerSecond' => $this->normalizeRateValue($row['tx-bits-per-second'] ?? null),
+            'fpTxPacketsPerSecond' => (int) ($row['fp-tx-packets-per-second'] ?? 0),
+            'fpTxBitsPerSecond' => $this->normalizeRateValue($row['fp-tx-bits-per-second'] ?? null),
+            'txDropsPerSecond' => (int) ($row['tx-drops-per-second'] ?? 0),
+            'txQueueDropsPerSecond' => (int) ($row['tx-queue-drops-per-second'] ?? 0),
+            'txErrorsPerSecond' => (int) ($row['tx-errors-per-second'] ?? 0),
+        ];
+    }
+
     /**
      * Connects to RouterOS API, authenticates, and reads DHCP leases.
      * Errors are logged and swallowed so sync jobs stay non-fatal.
@@ -155,6 +182,22 @@ class MikroTikClient
             )));
         } catch (\Throwable $e) {
             $this->logger->error('MikroTik DNS cache sync failed', ['exception' => $e]);
+        }
+
+        return [];
+    }
+
+    private function fetchMonitorTraffic(): array
+    {
+        try {
+            $rows = $this->fetchRouterOsRows('/interface/monitor-traffic', [
+                sprintf('=interface=%s', $this->mikrotikMonitorInterface),
+                '=once=',
+            ]);
+
+            return $rows[0] ?? [];
+        } catch (\Throwable $e) {
+            $this->logger->error('MikroTik live traffic fetch failed', ['exception' => $e]);
         }
 
         return [];
@@ -230,7 +273,7 @@ class MikroTikClient
         ];
     }
 
-    private function fetchRouterOsRows(string $command): array
+    private function fetchRouterOsRows(string $command, array $params = []): array
     {
         $host = trim((string) ($_ENV['MIKROTIK_HOST'] ?? ''));
         $port = (int) ($_ENV['MIKROTIK_PORT'] ?? 8728);
@@ -270,7 +313,7 @@ class MikroTikClient
         }
 
         try {
-            return $this->routerOsPrint($socket, $command);
+            return $this->routerOsPrint($socket, $command, $params);
         } finally {
             fclose($socket);
         }
@@ -301,9 +344,9 @@ class MikroTikClient
         return false;
     }
 
-    private function routerOsPrint($socket, string $command): array
+    private function routerOsPrint($socket, string $command, array $params = []): array
     {
-        $this->writeSentence($socket, [$command]);
+        $this->writeSentence($socket, array_merge([$command], $params));
         $rows = [];
 
         while (true) {
@@ -501,6 +544,55 @@ class MikroTikClient
         return $result;
     }
 
+    private function normalizeRateValue(mixed $value): float
+    {
+        if (is_numeric($value)) {
+            return (float) $value;
+        }
+
+        if (!is_string($value)) {
+            return 0.0;
+        }
+
+        $value = trim($value);
+        if ($value === '') {
+            return 0.0;
+        }
+
+        if (preg_match('/^([0-9]+(?:\\.[0-9]+)?)\\s*([KMG]?bps)$/i', $value, $matches)) {
+            $number = (float) $matches[1];
+            $unit = strtolower($matches[2]);
+            return match ($unit) {
+                'kbps' => $number * 1000,
+                'mbps' => $number * 1000000,
+                'gbps' => $number * 1000000000,
+                default => $number,
+            };
+        }
+
+        return (float) preg_replace('/[^0-9.]/', '', $value);
+    }
+
+    private function emptyMonitorTrafficPayload(): array
+    {
+        return [
+            'interface' => $this->mikrotikMonitorInterface,
+            'rxPacketsPerSecond' => 0,
+            'rxBitsPerSecond' => 0.0,
+            'fpRxPacketsPerSecond' => 0,
+            'fpRxBitsPerSecond' => 0.0,
+            'rxDropsPerSecond' => 0,
+            'rxErrorsPerSecond' => 0,
+            'txPacketsPerSecond' => 0,
+            'txBitsPerSecond' => 0.0,
+            'fpTxPacketsPerSecond' => 0,
+            'fpTxBitsPerSecond' => 0.0,
+            'txDropsPerSecond' => 0,
+            'txQueueDropsPerSecond' => 0,
+            'txErrorsPerSecond' => 0,
+        ];
+    }
+
     private function mockLeases(): array
     {
         return [
@@ -520,6 +612,26 @@ class MikroTikClient
             ['domain' => 'facebook.com', 'recordType' => 'A', 'resolvedIp' => '157.240.229.35', 'cname' => null, 'ttl' => 300],
             ['domain' => 'instagram.com', 'recordType' => 'A', 'resolvedIp' => '157.240.229.174', 'cname' => null, 'ttl' => 300],
             ['domain' => 'office.com', 'recordType' => 'CNAME', 'resolvedIp' => null, 'cname' => 'office.com', 'ttl' => 300],
+        ];
+    }
+
+    private function mockMonitorTraffic(): array
+    {
+        return [
+            'name' => $this->mikrotikMonitorInterface,
+            'rx-packets-per-second' => 1224,
+            'rx-bits-per-second' => '4.7Mbps',
+            'fp-rx-packets-per-second' => 1224,
+            'fp-rx-bits-per-second' => '4.7Mbps',
+            'rx-drops-per-second' => 0,
+            'rx-errors-per-second' => 0,
+            'tx-packets-per-second' => 1706,
+            'tx-bits-per-second' => '17.2Mbps',
+            'fp-tx-packets-per-second' => 1706,
+            'fp-tx-bits-per-second' => '17.1Mbps',
+            'tx-drops-per-second' => 0,
+            'tx-queue-drops-per-second' => 0,
+            'tx-errors-per-second' => 0,
         ];
     }
 

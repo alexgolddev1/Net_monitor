@@ -17,6 +17,16 @@
     <span>Завантаження даних...</span>
 </div>
 <style>@keyframes spin { to { transform: rotate(360deg); } }</style>
+<section class="panel" style="margin-bottom:16px;">
+    <h2>Трафік в реальному часі</h2>
+    <div class="grid stats" style="margin-bottom:10px;">
+        <div class="stat"><div class="muted">Інтерфейс</div><div class="value" id="live-iface">...</div></div>
+        <div class="stat"><div class="muted">Rx</div><div class="value" id="live-rx">...</div></div>
+        <div class="stat"><div class="muted">Tx</div><div class="value" id="live-tx">...</div></div>
+        <div class="stat"><div class="muted">Помилки / дропи</div><div class="value" id="live-errors">...</div></div>
+    </div>
+    <div class="muted" id="live-updated">Оновлення ще не виконувалось</div>
+</section>
 <div class="grid two">
     <section class="panel">
         <h2>Топ пристроїв за сьогодні</h2>
@@ -87,6 +97,7 @@ const appsChart = new Chart(document.getElementById('appsChart'), {
 });
 
 const dashboardApiUrl = {{ path('api_dashboard')|json_encode|raw }};
+const mikrotikLiveUrl = {{ path('api_mikrotik_live_traffic')|json_encode|raw }};
 
 function formatBytes(bytes) {
   const value = Number(bytes) || 0;
@@ -100,6 +111,14 @@ function formatBytes(bytes) {
     return `${(value / 1024).toFixed(1)} КБ`;
   }
   return `${value} Б`;
+}
+
+function formatRate(bitsPerSecond) {
+  const value = Number(bitsPerSecond) || 0;
+  if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)} Гбіт/с`;
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)} Мбіт/с`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1)} Кбіт/с`;
+  return `${Math.round(value)} біт/с`;
 }
 
 function clearAndRender(tbody, rows) {
@@ -219,6 +238,21 @@ function updateAppsChart(topApps) {
   appsChart.update();
 }
 
+function updateLiveTraffic(data) {
+  document.getElementById('live-iface').textContent = data.interface || '-';
+  document.getElementById('live-rx').textContent = formatRate(data.rxBitsPerSecond);
+  document.getElementById('live-tx').textContent = formatRate(data.txBitsPerSecond);
+  const errors = [
+    Number(data.rxErrorsPerSecond) || 0,
+    Number(data.txErrorsPerSecond) || 0,
+    Number(data.rxDropsPerSecond) || 0,
+    Number(data.txDropsPerSecond) || 0,
+    Number(data.txQueueDropsPerSecond) || 0,
+  ].reduce((sum, value) => sum + value, 0);
+  document.getElementById('live-errors').textContent = `${errors}`;
+  document.getElementById('live-updated').textContent = `Оновлено: ${new Date().toLocaleTimeString()}`;
+}
+
 function applyDashboard(data) {
   updateMetrics(data);
   renderTopDevices(data.topDevices || []);
@@ -241,18 +275,31 @@ function loadDashboard() {
     });
 }
 
+function loadLiveTraffic() {
+  return fetch(mikrotikLiveUrl, { headers: { Accept: 'application/json' }, cache: 'no-store' })
+    .then((response) => response.ok ? response.json() : Promise.reject(new Error(`Live traffic API ${response.status}`)))
+    .then((data) => {
+      updateLiveTraffic(data);
+      return data;
+    });
+}
+
 loadDashboard()
-  .then(() => {
-    window.setInterval(() => {
-      loadDashboard().catch((error) => console.warn('Dashboard refresh failed', error));
-    }, 15000);
-  })
   .catch((error) => {
     console.warn('Dashboard load failed', error);
     const loading = document.getElementById('dashboard-loading');
     if (loading) {
       loading.textContent = 'Не вдалося завантажити дані.';
     }
+  })
+  .finally(() => {
+    loadLiveTraffic().catch((error) => console.warn('Live traffic load failed', error));
+    window.setInterval(() => {
+      loadDashboard().catch((error) => console.warn('Dashboard refresh failed', error));
+    }, 15000);
+    window.setInterval(() => {
+      loadLiveTraffic().catch((error) => console.warn('Live traffic refresh failed', error));
+    }, 3000);
   });
 </script>
 {% endblock %}

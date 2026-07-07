@@ -5,6 +5,7 @@ namespace App\Controller;
 use App\Entity\Client;
 use App\Entity\Device;
 use App\Service\DashboardCacheService;
+use App\Service\MikroTikClient;
 use App\Service\PageCacheService;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
@@ -19,6 +20,7 @@ class ApiController extends AbstractController
         private readonly EntityManagerInterface $em,
         private readonly DashboardCacheService $dashboardCache,
         private readonly PageCacheService $pageCache,
+        private readonly MikroTikClient $mikroTikClient,
     )
     {
     }
@@ -63,6 +65,12 @@ class ApiController extends AbstractController
     public function deviceTraffic(Device $device): JsonResponse
     {
         return $this->json($this->pageCache->cachedDeviceDetail((int) $device->getId()));
+    }
+
+    #[Route('/mikrotik/live-traffic', methods: ['GET'], name: 'api_mikrotik_live_traffic')]
+    public function mikrotikLiveTraffic(): JsonResponse
+    {
+        return $this->json($this->mikroTikClient->monitorTraffic());
     }
 
     #[Route('/devices/{id}/link-client', methods: ['POST'])]
