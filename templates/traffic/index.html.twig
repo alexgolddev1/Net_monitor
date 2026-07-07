@@ -123,8 +123,6 @@
 <script>
 const trafficApiUrl = {{ path('api_traffic_series')|json_encode|raw }};
 const trafficBreakdownApiUrl = {{ path('api_traffic_breakdown')|json_encode|raw }};
-const deviceShowUrlTemplate = {{ path('device_show', {'id': '__ID__'})|json_encode|raw }};
-const clientShowUrlTemplate = {{ path('client_show', {'id': '__ID__'})|json_encode|raw }};
 const initialRange = new URLSearchParams(window.location.search).get('range') || '12h';
 const kyivTimeFormatter = new Intl.DateTimeFormat('uk-UA', {
   dateStyle: 'short',
@@ -285,6 +283,14 @@ function createLink(label, href) {
   return link;
 }
 
+function deviceShowUrl(id) {
+  return `/devices/${encodeURIComponent(id)}`;
+}
+
+function clientShowUrl(id) {
+  return `/clients/${encodeURIComponent(id)}`;
+}
+
 function renderPointParticipants(rows) {
   trafficElements.pointBody.replaceChildren();
 
@@ -309,7 +315,7 @@ function renderPointParticipants(rows) {
 
     const participantTitle = document.createElement('div');
     participantTitle.style.fontWeight = '700';
-    participantTitle.appendChild(createLink(row.mac || `Пристрій #${row.deviceId}`, (deviceShowUrlTemplate || '').replace('__ID__', row.deviceId)));
+    participantTitle.appendChild(createLink(row.mac || `Пристрій #${row.deviceId}`, deviceShowUrl(row.deviceId)));
     participantWrap.appendChild(participantTitle);
 
     const participantMeta = document.createElement('div');
@@ -321,7 +327,7 @@ function renderPointParticipants(rows) {
 
     const clientTd = document.createElement('td');
     if (row.clientId) {
-      clientTd.appendChild(createLink(row.clientDisplayName || `Клієнт #${row.clientId}`, (clientShowUrlTemplate || '').replace('__ID__', row.clientId)));
+      clientTd.appendChild(createLink(row.clientDisplayName || `Клієнт #${row.clientId}`, clientShowUrl(row.clientId)));
       if (row.clientRoomNumber) {
         const room = document.createElement('div');
         room.className = 'muted';
