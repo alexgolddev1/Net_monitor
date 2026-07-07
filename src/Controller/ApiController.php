@@ -182,94 +182,24 @@ class ApiController extends AbstractController
         $startBase = $end->modify('-'.($hours - 1).' hours');
         $start = $startBase->setTime((int) $startBase->format('H'), 0, 0);
 
-        try {
-            $params = [
-                'start' => $start->format('Y-m-d H:i:s'),
-                'end' => $end->format('Y-m-d H:i:s'),
-                'scopeType' => $scopeType,
-                'scopeId' => $scopeId ?? 0,
-            ];
-
-            $where = 'bucket_at BETWEEN :start AND :end AND scope_type = :scopeType AND scope_id = :scopeId';
-            $sql = 'SELECT bucket_at bucket,
-                    download_bytes downloadBytes,
-                    upload_bytes uploadBytes
-             FROM traffic_hourly_usage
-             WHERE '.$where.'
-             ORDER BY bucket ASC';
-
-            $rows = $this->em->getConnection()->fetchAllAssociative($sql, $params);
-        } catch (\Throwable) {
-            return $this->hourlyTrafficSeriesFallback($hours, $label, $scopeType, $scopeId, $filterLabel, $start, $end);
+        if (!$this->trafficHourlyUsageTableExists()) {
+            return $this->emptyTrafficSeriesPayload($hours, $label, 'hour', $filterLabel, $start, $end);
         }
 
-        $data = [];
-        foreach ($rows as $row) {
-            $data[(string) $row['bucket']] = [
-                'download' => (int) ($row['downloadBytes'] ?? 0),
-                'upload' => (int) ($row['uploadBytes'] ?? 0),
-            ];
-        }
-
-        $labels = [];
-        $download = [];
-        $upload = [];
-
-        $cursor = $start;
-        for ($i = 0; $i < $hours; ++$i) {
-            $bucket = $cursor->format('Y-m-d H:00:00');
-            $labels[] = $cursor->format('d.m H:00');
-            $download[] = $data[$bucket]['download'] ?? 0;
-            $upload[] = $data[$bucket]['upload'] ?? 0;
-            $cursor = $cursor->modify('+1 hour');
-        }
-
-        return $this->trafficSeriesPayload($label, $labels, $download, $upload, 'hour', $start, $end, $filterLabel);
-    }
-
-    private function hourlyTrafficSeriesFallback(int $hours, string $label, string $scopeType, ?int $scopeId, ?string $filterLabel, \DateTimeImmutable $start, \DateTimeImmutable $end): array
-    {
         $params = [
             'start' => $start->format('Y-m-d H:i:s'),
             'end' => $end->format('Y-m-d H:i:s'),
-            'download' => 'download',
-            'upload' => 'upload',
+            'scopeType' => $scopeType,
+            'scopeId' => $scopeId ?? 0,
         ];
 
-        $where = 'f.received_at BETWEEN :start AND :end';
-
-        if ($scopeType === 'device' && $scopeId !== null) {
-            $params['scopeId'] = $scopeId;
-            $where .= ' AND f.device_id = :scopeId';
-        } elseif ($scopeType === 'client' && $scopeId !== null) {
-            $params['scopeId'] = $scopeId;
-            $where .= ' AND d.client_id = :scopeId';
-        }
-
-        $sql = match ($scopeType) {
-            'device' => 'SELECT DATE_FORMAT(f.received_at, \'%Y-%m-%d %H:00:00\') bucket,
-                            COALESCE(SUM(CASE WHEN direction = :download THEN COALESCE(bytes, 0) ELSE 0 END), 0) downloadBytes,
-                            COALESCE(SUM(CASE WHEN direction = :upload THEN COALESCE(bytes, 0) ELSE 0 END), 0) uploadBytes
-                     FROM network_flow f
-                     WHERE '.$where.'
-                     GROUP BY bucket
-                     ORDER BY bucket ASC',
-            'client' => 'SELECT DATE_FORMAT(f.received_at, \'%Y-%m-%d %H:00:00\') bucket,
-                            COALESCE(SUM(CASE WHEN f.direction = :download THEN COALESCE(f.bytes, 0) ELSE 0 END), 0) downloadBytes,
-                            COALESCE(SUM(CASE WHEN f.direction = :upload THEN COALESCE(f.bytes, 0) ELSE 0 END), 0) uploadBytes
-                     FROM network_flow f
-                     INNER JOIN device d ON d.id = f.device_id
-                     WHERE '.$where.'
-                     GROUP BY bucket
-                     ORDER BY bucket ASC',
-            default => 'SELECT DATE_FORMAT(f.received_at, \'%Y-%m-%d %H:00:00\') bucket,
-                            COALESCE(SUM(CASE WHEN direction = :download THEN COALESCE(bytes, 0) ELSE 0 END), 0) downloadBytes,
-                            COALESCE(SUM(CASE WHEN direction = :upload THEN COALESCE(bytes, 0) ELSE 0 END), 0) uploadBytes
-                     FROM network_flow f
-                     WHERE '.$where.'
-                     GROUP BY bucket
-                     ORDER BY bucket ASC',
-        };
+        $where = 'bucket_at BETWEEN :start AND :end AND scope_type = :scopeType AND scope_id = :scopeId';
+        $sql = 'SELECT bucket_at bucket,
+                download_bytes downloadBytes,
+                upload_bytes uploadBytes
+         FROM traffic_hourly_usage
+         WHERE '.$where.'
+         ORDER BY bucket ASC';
 
         $rows = $this->em->getConnection()->fetchAllAssociative($sql, $params);
 
@@ -303,6 +233,10 @@ class ApiController extends AbstractController
         $today = new \DateTimeImmutable('today');
         $start = $today->modify('-'.($days - 1).' days');
         $end = $today->setTime(23, 59, 59);
+
+        if (!$this->trafficHourlyUsageTableExists() && $scopeType !== 'all') {
+            return $this->emptyTrafficSeriesPayload($days, $label, 'day', $filterLabel, $start, $end);
+        }
 
         $params = [
             'start' => $start->format('Y-m-d'),
@@ -369,6 +303,30 @@ class ApiController extends AbstractController
         }
 
         return $this->trafficSeriesPayload($label, $labels, $download, $upload, 'day', $start, $end, $filterLabel);
+    }
+
+    private function trafficHourlyUsageTableExists(): bool
+    {
+        try {
+            return (bool) $this->em->getConnection()->fetchOne("SHOW TABLES LIKE 'traffic_hourly_usage'");
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    private function emptyTrafficSeriesPayload(int $steps, string $label, string $granularity, ?string $filterLabel, \DateTimeImmutable $start, \DateTimeImmutable $end): array
+    {
+        $steps = max(1, $steps);
+        return $this->trafficSeriesPayload(
+            $label,
+            array_fill(0, $steps, ''),
+            array_fill(0, $steps, 0),
+            array_fill(0, $steps, 0),
+            $granularity,
+            $start,
+            $end,
+            $filterLabel
+        );
     }
 
     private function trafficSeriesPayload(string $label, array $labels, array $download, array $upload, string $granularity, \DateTimeImmutable $start, \DateTimeImmutable $end, ?string $filterLabel = null): array
