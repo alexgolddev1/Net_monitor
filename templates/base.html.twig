@@ -59,15 +59,33 @@
         .speedtest-frame { width:100%; min-height:520px; border:1px solid var(--line); border-radius:10px; background:#fff; }
         .speedtest-external-note { font-size:13px; color:var(--muted); line-height:1.45; }
         .traffic-shell { display:grid; gap:16px; }
-        .traffic-toolbar { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap; }
+        .traffic-page { display:grid; gap:16px; }
+        .traffic-kicker { font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin-bottom:6px; }
+        .traffic-header { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap; }
         .traffic-range-group { display:flex; gap:8px; flex-wrap:wrap; }
         .traffic-range-group .btn.is-active { background:#111827; }
-        .traffic-summary { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; }
-        .traffic-chart-box { position:relative; min-height:420px; }
+        .traffic-controls { display:grid; grid-template-columns:minmax(220px,1fr) minmax(220px,1fr) auto; gap:12px; align-items:end; }
+        .traffic-actions { display:flex; justify-content:flex-end; align-items:end; }
+        .traffic-legend-bar { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; padding:10px 12px; background:#f8fafc; border:1px solid var(--line); border-radius:8px; }
+        .traffic-legend-item { display:flex; align-items:center; gap:8px; font-size:13px; color:#374151; font-weight:600; }
+        .traffic-dot { width:10px; height:10px; border-radius:999px; display:inline-block; }
+        .traffic-dot-download { background:#2f9e44; }
+        .traffic-dot-upload { background:#e03131; }
+        .traffic-meta-row { display:flex; gap:12px; flex-wrap:wrap; font-size:12px; color:var(--muted); }
+        .traffic-graph-frame { border:1px solid var(--line); border-radius:8px; background:#fff; overflow:hidden; }
+        .traffic-graph-topline { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:10px 12px; background:#eef2f7; color:#374151; font-size:13px; font-weight:600; border-bottom:1px solid var(--line); }
+        .traffic-chart-box { position:relative; min-height:420px; padding:8px 12px 14px; }
         .traffic-chart-box canvas { position:absolute; inset:0; width:100% !important; height:100% !important; }
         .traffic-meta { display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; font-size:13px; color:var(--muted); }
         .favicon { width:18px; height:18px; vertical-align:middle; margin-right:8px; border-radius:4px; }
-        @media (max-width: 820px) { .layout { grid-template-columns:1fr; } .sidebar { position:static; } .two,.public-two { grid-template-columns:1fr; } table { display:block; overflow-x:auto; } }
+        @media (max-width: 820px) {
+            .layout { grid-template-columns:1fr; }
+            .sidebar { position:static; }
+            .two,.public-two { grid-template-columns:1fr; }
+            table { display:block; overflow-x:auto; }
+            .traffic-controls { grid-template-columns:1fr; }
+            .traffic-actions { justify-content:flex-start; }
+        }
     </style>
 </head>
 <body>
