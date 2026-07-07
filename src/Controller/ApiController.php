@@ -146,6 +146,40 @@ class ApiController extends AbstractController
         }
     }
 
+    #[Route('/traffic/breakdown', methods: ['GET'], name: 'api_traffic_breakdown')]
+    public function trafficBreakdown(Request $request): JsonResponse
+    {
+        try {
+            $range = $this->normalizeTrafficRange((string) $request->query->get('range', '12h'));
+            $bucketValue = trim((string) $request->query->get('bucket', ''));
+            if ($bucketValue === '') {
+                throw new \InvalidArgumentException('Missing traffic bucket');
+            }
+
+            $scopeType = 'all';
+            $scopeId = null;
+            $filterLabel = null;
+
+            $deviceId = (int) $request->query->get('deviceId', 0);
+            $clientId = (int) $request->query->get('clientId', 0);
+            if ($deviceId > 0) {
+                $scopeType = 'device';
+                $scopeId = $deviceId;
+                $device = $this->em->getRepository(Device::class)->find($deviceId);
+                $filterLabel = $device ? sprintf('Пристрій: %s', $device->getMac()) : sprintf('Пристрій #%d не знайдено', $deviceId);
+            } elseif ($clientId > 0) {
+                $scopeType = 'client';
+                $scopeId = $clientId;
+                $client = $this->em->getRepository(Client::class)->find($clientId);
+                $filterLabel = $client ? sprintf('Клієнт: %s', $client->getDisplayName()) : sprintf('Клієнт #%d не знайдено', $clientId);
+            }
+
+            return $this->json($this->trafficPointBreakdown($range, $bucketValue, $scopeType, $scopeId, $filterLabel));
+        } catch (\InvalidArgumentException) {
+            return $this->json(['error' => 'Unsupported traffic point.'], 400);
+        }
+    }
+
     private function dashboardPayload(): array
     {
         $today = $this->todayDateParameter();
@@ -220,6 +254,7 @@ class ApiController extends AbstractController
         }
 
         $labels = [];
+        $buckets = [];
         $download = [];
         $upload = [];
 
@@ -227,12 +262,13 @@ class ApiController extends AbstractController
         for ($i = 0; $i < $hours; ++$i) {
             $bucket = $cursor->format('Y-m-d H:00:00');
             $labels[] = $cursor->format('d.m H:00');
+            $buckets[] = $cursor->format(DATE_ATOM);
             $download[] = $data[$bucket]['download'] ?? 0;
             $upload[] = $data[$bucket]['upload'] ?? 0;
             $cursor = $cursor->modify('+1 hour');
         }
 
-        return $this->trafficSeriesPayload($label, $labels, $download, $upload, 'hour', $start, $end, $filterLabel);
+        return $this->trafficSeriesPayload($label, $labels, $buckets, $download, $upload, 'hour', $start, $end, $filterLabel);
     }
 
     private function hourlyTrafficRowsFromRollups(\DateTimeImmutable $start, \DateTimeImmutable $end, string $scopeType, ?int $scopeId): array
@@ -274,6 +310,7 @@ class ApiController extends AbstractController
         }
 
         $labels = [];
+        $buckets = [];
         $download = [];
         $upload = [];
 
@@ -281,20 +318,29 @@ class ApiController extends AbstractController
         for ($i = 0; $i < $days; ++$i) {
             $bucket = $cursor->format('Y-m-d');
             $labels[] = $cursor->format('d.m');
+            $buckets[] = $cursor->format(DATE_ATOM);
             $download[] = $data[$bucket]['download'] ?? 0;
             $upload[] = $data[$bucket]['upload'] ?? 0;
             $cursor = $cursor->modify('+1 day');
         }
 
-        return $this->trafficSeriesPayload($label, $labels, $download, $upload, 'day', $start, $end, $filterLabel);
+        return $this->trafficSeriesPayload($label, $labels, $buckets, $download, $upload, 'day', $start, $end, $filterLabel);
     }
 
     private function emptyTrafficSeriesPayload(int $steps, string $label, string $granularity, ?string $filterLabel, \DateTimeImmutable $start, \DateTimeImmutable $end): array
     {
         $steps = max(1, $steps);
+        $buckets = [];
+        $cursor = $start;
+        for ($i = 0; $i < $steps; ++$i) {
+            $buckets[] = $cursor->format(DATE_ATOM);
+            $cursor = $granularity === 'hour' ? $cursor->modify('+1 hour') : $cursor->modify('+1 day');
+        }
+
         return $this->trafficSeriesPayload(
             $label,
             array_fill(0, $steps, ''),
+            $buckets,
             array_fill(0, $steps, 0),
             array_fill(0, $steps, 0),
             $granularity,
@@ -306,7 +352,7 @@ class ApiController extends AbstractController
 
     private function trafficSeriesCacheKey(string $range, string $scopeType, ?int $scopeId): string
     {
-        return sprintf('traffic_series_%s_%s_%s', $range, $scopeType, $scopeId ?? 0);
+        return sprintf('traffic_series_v2_%s_%s_%s', $range, $scopeType, $scopeId ?? 0);
     }
 
     private function readTrafficSeriesCache(string $key): ?array
@@ -363,7 +409,7 @@ class ApiController extends AbstractController
         return $this->kernel->getProjectDir().'/var/cache/'.$key.'.json';
     }
 
-    private function trafficSeriesPayload(string $label, array $labels, array $download, array $upload, string $granularity, \DateTimeImmutable $start, \DateTimeImmutable $end, ?string $filterLabel = null): array
+    private function trafficSeriesPayload(string $label, array $labels, array $buckets, array $download, array $upload, string $granularity, \DateTimeImmutable $start, \DateTimeImmutable $end, ?string $filterLabel = null): array
     {
         $downloadTotal = array_sum($download);
         $uploadTotal = array_sum($upload);
@@ -374,6 +420,7 @@ class ApiController extends AbstractController
             'filterLabel' => $filterLabel,
             'granularity' => $granularity,
             'labels' => $labels,
+            'buckets' => $buckets,
             'download' => $download,
             'upload' => $upload,
             'downloadTotal' => $downloadTotal,
@@ -393,6 +440,128 @@ class ApiController extends AbstractController
     private function utcTimezone(): \DateTimeZone
     {
         return new \DateTimeZone('UTC');
+    }
+
+    private function trafficPointBreakdown(string $range, string $bucketValue, string $scopeType, ?int $scopeId, ?string $filterLabel = null): array
+    {
+        $kyiv = $this->kyivTimezone();
+        $utc = $this->utcTimezone();
+        try {
+            $bucket = new \DateTimeImmutable($bucketValue);
+        } catch (\Exception) {
+            throw new \InvalidArgumentException('Invalid traffic bucket');
+        }
+        $bucketKyiv = $bucket->setTimezone($kyiv);
+        $granularity = match ($range) {
+            '12h', 'day' => 'hour',
+            'week', 'month' => 'day',
+            default => throw new \InvalidArgumentException('Unsupported traffic range'),
+        };
+
+        if ($granularity === 'hour') {
+            $start = $bucketKyiv->setTime((int) $bucketKyiv->format('H'), 0, 0);
+            $end = $start->modify('+1 hour');
+            $windowLabel = $start->format('d.m.Y H:00');
+        } else {
+            $start = $bucketKyiv->setTime(0, 0, 0);
+            $end = $start->modify('+1 day');
+            $windowLabel = $start->format('d.m.Y');
+        }
+
+        $rows = $this->trafficPointRowsFromFlows(
+            $start->setTimezone($utc),
+            $end->setTimezone($utc),
+            $scopeType,
+            $scopeId
+        );
+
+        $participants = [];
+        $downloadTotal = 0;
+        $uploadTotal = 0;
+        foreach ($rows as $row) {
+            $download = (int) ($row['downloadBytes'] ?? 0);
+            $upload = (int) ($row['uploadBytes'] ?? 0);
+            $total = $download + $upload;
+            $downloadTotal += $download;
+            $uploadTotal += $upload;
+
+            $participants[] = [
+                'deviceId' => (int) $row['deviceId'],
+                'mac' => (string) ($row['mac'] ?? ''),
+                'hostname' => $row['hostname'] ?? null,
+                'currentIp' => $row['currentIp'] ?? null,
+                'clientId' => isset($row['clientId']) ? (int) $row['clientId'] : null,
+                'clientDisplayName' => $row['clientFullName'] ?? null,
+                'clientRoomNumber' => $row['clientRoomNumber'] ?? null,
+                'download' => $download,
+                'upload' => $upload,
+                'total' => $total,
+            ];
+        }
+
+        return [
+            'rangeLabel' => $range === '12h' ? 'Останні 12 годин' : ($range === 'day' ? 'Останні 24 години' : ($range === 'week' ? 'Останні 7 днів' : 'Останні 30 днів')),
+            'filterLabel' => $filterLabel,
+            'granularity' => $granularity,
+            'bucketLabel' => $windowLabel,
+            'from' => $start->format(DATE_ATOM),
+            'to' => $end->format(DATE_ATOM),
+            'downloadTotal' => $downloadTotal,
+            'uploadTotal' => $uploadTotal,
+            'total' => $downloadTotal + $uploadTotal,
+            'participants' => $participants,
+            'generatedAt' => (new \DateTimeImmutable('now', $kyiv))->format(DATE_ATOM),
+        ];
+    }
+
+    private function trafficPointRowsFromFlows(\DateTimeImmutable $start, \DateTimeImmutable $end, string $scopeType, ?int $scopeId): array
+    {
+        $params = [
+            'start' => $start->format('Y-m-d H:i:s'),
+            'end' => $end->format('Y-m-d H:i:s'),
+        ];
+
+        $sql = "SELECT resolved.deviceId,
+                       resolved.mac,
+                       resolved.hostname,
+                       resolved.currentIp,
+                       resolved.clientId,
+                       resolved.clientFullName,
+                       resolved.clientRoomNumber,
+                       SUM(CASE WHEN resolved.direction = 'download' THEN COALESCE(resolved.bytes, 0) ELSE 0 END) downloadBytes,
+                       SUM(CASE WHEN resolved.direction = 'upload' THEN COALESCE(resolved.bytes, 0) ELSE 0 END) uploadBytes
+                FROM (
+                    SELECT COALESCE(f.device_id, d.id) deviceId,
+                           d.mac,
+                           d.hostname,
+                           d.current_ip currentIp,
+                           c.id clientId,
+                           c.full_name clientFullName,
+                           c.room_number clientRoomNumber,
+                           f.direction,
+                           f.bytes
+                    FROM network_flow f
+                    LEFT JOIN device d ON d.id = f.device_id OR (f.device_id IS NULL AND (
+                        (f.direction = 'upload' AND d.current_ip = f.src_ip)
+                        OR (f.direction = 'download' AND d.current_ip = COALESCE(f.post_nat_dst_ip, f.dst_ip))
+                    ))
+                    LEFT JOIN client c ON c.id = d.client_id
+                    WHERE f.received_at >= :start
+                      AND f.received_at < :end
+                ) resolved
+                WHERE resolved.deviceId IS NOT NULL";
+
+        if ($scopeType === 'device' && $scopeId !== null) {
+            $sql .= ' AND resolved.deviceId = :scopeId';
+            $params['scopeId'] = $scopeId;
+        } elseif ($scopeType === 'client' && $scopeId !== null) {
+            $sql .= ' AND resolved.clientId = :scopeId';
+            $params['scopeId'] = $scopeId;
+        }
+
+        $sql .= ' GROUP BY resolved.deviceId, resolved.mac, resolved.hostname, resolved.currentIp, resolved.clientId, resolved.clientFullName, resolved.clientRoomNumber ORDER BY (downloadBytes + uploadBytes) DESC LIMIT 20';
+
+        return $this->em->getConnection()->fetchAllAssociative($sql, $params);
     }
 
     private function clientPayload(Client $client): array

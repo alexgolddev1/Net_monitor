@@ -2,6 +2,20 @@
 {% block title %}Графік трафіку{% endblock %}
 {% block heading %}Графік трафіку{% endblock %}
 {% block body %}
+<style>
+.traffic-point-modal { width:min(960px, calc(100vw - 32px)); max-height:min(86vh, 900px); border:1px solid var(--line); border-radius:14px; padding:0; overflow:hidden; }
+.traffic-point-modal::backdrop { background:rgba(17,24,39,.55); backdrop-filter:blur(2px); }
+.traffic-point-modal-inner { display:grid; gap:14px; padding:18px; }
+.traffic-point-modal-header { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; }
+.traffic-point-summary { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:10px; }
+.traffic-point-stat { border:1px solid var(--line); border-radius:10px; padding:12px; background:#f8fafc; }
+.traffic-point-stat .label { font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
+.traffic-point-stat .value { margin-top:6px; font-size:18px; font-weight:750; }
+.traffic-point-table { width:100%; border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+.traffic-point-table-wrap { max-height:45vh; overflow:auto; border:1px solid var(--line); border-radius:10px; }
+.traffic-point-table a { color:var(--accent); }
+.traffic-point-empty { padding:14px; color:var(--muted); }
+</style>
 <div class="traffic-shell">
     <section class="panel traffic-page">
         <div class="traffic-header">
@@ -76,10 +90,41 @@
         </div>
     </section>
 </div>
+<dialog id="traffic-point-modal" class="traffic-point-modal">
+    <div class="traffic-point-modal-inner">
+        <div class="traffic-point-modal-header">
+            <div>
+                <div class="traffic-kicker">Деталізація точки графіка</div>
+                <h3 id="traffic-point-title">...</h3>
+            </div>
+            <button type="button" class="btn secondary" id="traffic-point-close">Закрити</button>
+        </div>
+        <div class="traffic-point-summary" id="traffic-point-summary"></div>
+        <div class="traffic-point-table-wrap">
+            <table class="traffic-point-table">
+                <thead>
+                    <tr>
+                        <th>Учасник</th>
+                        <th>Клієнт</th>
+                        <th>Вхідний</th>
+                        <th>Вихідний</th>
+                        <th>Разом</th>
+                    </tr>
+                </thead>
+                <tbody id="traffic-point-body">
+                    <tr><td colspan="5" class="traffic-point-empty">Виберіть точку на графіку.</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</dialog>
 {% endblock %}
 {% block scripts %}
 <script>
 const trafficApiUrl = {{ path('api_traffic_series')|json_encode|raw }};
+const trafficBreakdownApiUrl = {{ path('api_traffic_breakdown')|json_encode|raw }};
+const deviceShowUrlTemplate = {{ path('device_show', {'id': '__ID__'})|json_encode|raw }};
+const clientShowUrlTemplate = {{ path('client_show', {'id': '__ID__'})|json_encode|raw }};
 const initialRange = new URLSearchParams(window.location.search).get('range') || '12h';
 const kyivTimeFormatter = new Intl.DateTimeFormat('uk-UA', {
   dateStyle: 'short',
@@ -91,6 +136,8 @@ const trafficState = {
   range: initialRange,
   chart: null,
   loading: false,
+  payload: null,
+  pointLoading: false,
 };
 
 const trafficElements = {
@@ -103,6 +150,11 @@ const trafficElements = {
   state: document.getElementById('traffic-state'),
   total: document.getElementById('traffic-total'),
   granularity: document.getElementById('traffic-granularity'),
+  pointModal: document.getElementById('traffic-point-modal'),
+  pointTitle: document.getElementById('traffic-point-title'),
+  pointSummary: document.getElementById('traffic-point-summary'),
+  pointBody: document.getElementById('traffic-point-body'),
+  pointClose: document.getElementById('traffic-point-close'),
 };
 
 function formatBytes(bytes) {
@@ -158,6 +210,188 @@ function buildTrafficUrl(range) {
   return `${trafficApiUrl}?${params.toString()}`;
 }
 
+function buildTrafficBreakdownUrl(bucket) {
+  const params = new URLSearchParams({
+    range: trafficState.range,
+    bucket,
+  });
+  const filters = currentFilters();
+  Object.entries(filters).forEach(([key, value]) => params.set(key, value));
+  return `${trafficBreakdownApiUrl}?${params.toString()}`;
+}
+
+function formatTrafficTitle(payload) {
+  if (payload.bucketLabel) return payload.bucketLabel;
+  if (payload.rangeLabel) return payload.rangeLabel;
+  return 'Деталізація точки';
+}
+
+function setPointLoading(isLoading) {
+  trafficState.pointLoading = isLoading;
+  trafficElements.pointClose.disabled = isLoading;
+}
+
+function openPointModal() {
+  if (typeof trafficElements.pointModal.showModal === 'function') {
+    trafficElements.pointModal.showModal();
+  } else {
+    trafficElements.pointModal.setAttribute('open', 'open');
+  }
+}
+
+function closePointModal() {
+  if (typeof trafficElements.pointModal.close === 'function') {
+    trafficElements.pointModal.close();
+  } else {
+    trafficElements.pointModal.removeAttribute('open');
+  }
+}
+
+function renderPointSummary(payload) {
+  trafficElements.pointSummary.replaceChildren();
+  const items = [
+    ['Період', payload.bucketLabel || '-'],
+    ['Всього', formatBytes(payload.total)],
+    ['Вхідний', formatBytes(payload.downloadTotal)],
+    ['Вихідний', formatBytes(payload.uploadTotal)],
+  ];
+
+  items.forEach(([label, value]) => {
+    const card = document.createElement('div');
+    card.className = 'traffic-point-stat';
+    const labelEl = document.createElement('div');
+    labelEl.className = 'label';
+    labelEl.textContent = label;
+    const valueEl = document.createElement('div');
+    valueEl.className = 'value';
+    valueEl.textContent = value;
+    card.append(labelEl, valueEl);
+    trafficElements.pointSummary.appendChild(card);
+  });
+}
+
+function createLink(label, href) {
+  if (!href) {
+    const span = document.createElement('span');
+    span.textContent = label;
+    return span;
+  }
+
+  const link = document.createElement('a');
+  link.href = href;
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  link.textContent = label;
+  return link;
+}
+
+function renderPointParticipants(rows) {
+  trafficElements.pointBody.replaceChildren();
+
+  if (!rows.length) {
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 5;
+    td.className = 'traffic-point-empty';
+    td.textContent = 'Немає даних для цієї точки.';
+    tr.appendChild(td);
+    trafficElements.pointBody.appendChild(tr);
+    return;
+  }
+
+  rows.forEach((row) => {
+    const tr = document.createElement('tr');
+
+    const participantTd = document.createElement('td');
+    const participantWrap = document.createElement('div');
+    participantWrap.style.display = 'grid';
+    participantWrap.style.gap = '4px';
+
+    const participantTitle = document.createElement('div');
+    participantTitle.style.fontWeight = '700';
+    participantTitle.appendChild(createLink(row.mac || `Пристрій #${row.deviceId}`, (deviceShowUrlTemplate || '').replace('__ID__', row.deviceId)));
+    participantWrap.appendChild(participantTitle);
+
+    const participantMeta = document.createElement('div');
+    participantMeta.className = 'muted';
+    participantMeta.textContent = [row.hostname, row.currentIp].filter(Boolean).join(' · ') || '-';
+    participantWrap.appendChild(participantMeta);
+
+    participantTd.appendChild(participantWrap);
+
+    const clientTd = document.createElement('td');
+    if (row.clientId) {
+      clientTd.appendChild(createLink(row.clientDisplayName || `Клієнт #${row.clientId}`, (clientShowUrlTemplate || '').replace('__ID__', row.clientId)));
+      if (row.clientRoomNumber) {
+        const room = document.createElement('div');
+        room.className = 'muted';
+        room.textContent = row.clientRoomNumber;
+        clientTd.appendChild(room);
+      }
+    } else {
+      clientTd.textContent = '-';
+    }
+
+    const downloadTd = document.createElement('td');
+    downloadTd.textContent = formatBytes(row.download);
+
+    const uploadTd = document.createElement('td');
+    uploadTd.textContent = formatBytes(row.upload);
+
+    const totalTd = document.createElement('td');
+    totalTd.textContent = formatBytes(row.total);
+
+    tr.append(participantTd, clientTd, downloadTd, uploadTd, totalTd);
+    trafficElements.pointBody.appendChild(tr);
+  });
+}
+
+async function showTrafficPoint(index) {
+  const payload = trafficState.payload;
+  const bucket = payload?.buckets?.[index];
+  if (!bucket || trafficState.pointLoading) {
+    return;
+  }
+
+  setPointLoading(true);
+  trafficElements.pointTitle.textContent = 'Завантаження...';
+  renderPointSummary({
+    bucketLabel: payload.labels?.[index] || '-',
+    total: (Number(payload.download?.[index]) || 0) + (Number(payload.upload?.[index]) || 0),
+    downloadTotal: payload.download?.[index] || 0,
+    uploadTotal: payload.upload?.[index] || 0,
+  });
+  renderPointParticipants([]);
+  openPointModal();
+
+  try {
+    const response = await fetch(buildTrafficBreakdownUrl(bucket), {
+      headers: { Accept: 'application/json' },
+    });
+    if (!response.ok) {
+      throw new Error(`Traffic breakdown API ${response.status}`);
+    }
+
+    const detail = await response.json();
+    trafficElements.pointTitle.textContent = formatTrafficTitle(detail);
+    renderPointSummary(detail);
+    renderPointParticipants(detail.participants || []);
+  } catch (error) {
+    trafficElements.pointTitle.textContent = 'Помилка завантаження';
+    trafficElements.pointBody.replaceChildren();
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 5;
+    td.className = 'traffic-point-empty';
+    td.textContent = 'Не вдалося завантажити деталізацію.';
+    tr.appendChild(td);
+    trafficElements.pointBody.appendChild(tr);
+    console.warn('Traffic point load failed', error);
+  } finally {
+    setPointLoading(false);
+  }
+}
+
 function createChart() {
   const canvas = document.getElementById('trafficChart');
   trafficState.chart = new Chart(canvas, {
@@ -174,6 +408,7 @@ function createChart() {
           tension: 0,
           borderWidth: 1.8,
           pointRadius: 0,
+          pointHitRadius: 10,
         },
         {
           label: 'Вихідний',
@@ -184,6 +419,7 @@ function createChart() {
           tension: 0,
           borderWidth: 1.8,
           pointRadius: 0,
+          pointHitRadius: 10,
         },
       ],
     },
@@ -194,6 +430,12 @@ function createChart() {
       interaction: {
         mode: 'index',
         intersect: false,
+      },
+      onClick: (event, elements) => {
+        if (!elements.length) {
+          return;
+        }
+        showTrafficPoint(elements[0].index).catch((error) => console.warn('Traffic point open failed', error));
       },
       plugins: {
         legend: { display: false },
@@ -230,6 +472,7 @@ function updateHeader(payload) {
 }
 
 function updateChart(payload) {
+  trafficState.payload = payload;
   trafficState.chart.data.labels = payload.labels || [];
   trafficState.chart.data.datasets[0].data = payload.download || [];
   trafficState.chart.data.datasets[1].data = payload.upload || [];
@@ -287,6 +530,13 @@ trafficElements.client.addEventListener('change', () => {
     trafficElements.device.value = '';
   }
   loadTraffic(trafficState.range).catch((error) => console.warn('Traffic reload failed', error));
+});
+
+trafficElements.pointClose.addEventListener('click', closePointModal);
+trafficElements.pointModal.addEventListener('click', (event) => {
+  if (event.target === trafficElements.pointModal) {
+    closePointModal();
+  }
 });
 
 createChart();
