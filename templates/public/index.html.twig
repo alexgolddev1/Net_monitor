@@ -267,26 +267,46 @@ async function measureDownload(signal) {
 }
 
 async function measureUpload(signal) {
-  const payload = new Uint8Array(4 * 1024 * 1024);
-  for (let offset = 0; offset < payload.length; offset += 65536) {
-    crypto.getRandomValues(payload.subarray(offset, Math.min(offset + 65536, payload.length)));
-  }
-  const startedAt = performance.now();
-  const response = await fetch(speedtestEndpoints.upload, {
-    method: 'POST',
-    cache: 'no-store',
-    signal,
-    headers: {
-      'Content-Type': 'application/octet-stream',
-    },
-    body: payload,
-  });
-  if (!response.ok) {
-    throw new Error(`Upload failed: ${response.status}`);
+  const sizes = [1024 * 1024, 256 * 1024, 64 * 1024];
+  let lastError = null;
+
+  for (const size of sizes) {
+    const payload = new Uint8Array(size);
+    for (let offset = 0; offset < payload.length; offset += 65536) {
+      crypto.getRandomValues(payload.subarray(offset, Math.min(offset + 65536, payload.length)));
+    }
+
+    try {
+      const startedAt = performance.now();
+      const response = await fetch(speedtestEndpoints.upload, {
+        method: 'POST',
+        cache: 'no-store',
+        signal,
+        headers: {
+          'Content-Type': 'application/octet-stream',
+        },
+        body: payload,
+      });
+
+      if (!response.ok) {
+        if (response.status === 413) {
+          lastError = new Error('Upload blocked by body-size limit');
+          continue;
+        }
+        throw new Error(`Upload failed: ${response.status}`);
+      }
+
+      const elapsedSeconds = (performance.now() - startedAt) / 1000;
+      return (payload.byteLength * 8) / elapsedSeconds;
+    } catch (error) {
+      if (error?.name === 'AbortError') {
+        throw error;
+      }
+      lastError = error;
+    }
   }
 
-  const elapsedSeconds = (performance.now() - startedAt) / 1000;
-  return (payload.byteLength * 8) / elapsedSeconds;
+  throw lastError || new Error('Upload failed');
 }
 
 async function runSpeedTest() {
@@ -313,10 +333,22 @@ async function runSpeedTest() {
     setLog('Вимірюється швидкість відправки...');
     setProgress(75);
 
-    const uploadMbps = await measureUpload(speedtestState.controller.signal);
-    speedtestElements.upload.textContent = formatMbps(uploadMbps);
-    setStatus('Готово', 'Тест завершено');
-    setLog('Тест швидкості завершено.');
+    try {
+      const uploadMbps = await measureUpload(speedtestState.controller.signal);
+      speedtestElements.upload.textContent = formatMbps(uploadMbps);
+      setLog('Тест швидкості завершено.');
+      setStatus('Готово', 'Тест завершено');
+    } catch (uploadError) {
+      if (uploadError?.name === 'AbortError') {
+        throw uploadError;
+      }
+      console.warn('Upload step failed', uploadError);
+      speedtestElements.upload.textContent = 'обмежено';
+      setStatus('Частково', 'Upload заблоковано лімітом сервера');
+      setLog('Download і ping пройшли. Upload обмежено серверним лімітом.');
+      setProgress(100);
+      return;
+    }
     setProgress(100);
   } catch (error) {
     if (error?.name === 'AbortError') {
