@@ -21,9 +21,9 @@
     <section class="panel">
         <h2>Топ пристроїв за сьогодні</h2>
         <table>
-            <thead><tr><th>MAC</th><th>IP</th><th>Усього</th><th>Вхідний</th><th>Вихідний</th></tr></thead>
+            <thead><tr><th>MAC</th><th>IP</th><th>Юзер</th><th>Коментар</th><th>Усього</th><th>Вхідний</th><th>Вихідний</th></tr></thead>
             <tbody id="top-devices-body">
-                <tr><td colspan="5" class="muted">Завантаження...</td></tr>
+                <tr><td colspan="7" class="muted">Завантаження...</td></tr>
             </tbody>
         </table>
     </section>
@@ -138,6 +138,12 @@ function renderTopDevices(rows) {
     const line = document.createElement('tr');
     line.appendChild(linkCell(row.mac || '-', `/devices/${row.id}`));
     line.appendChild(textCell(row.currentIp || '-'));
+    if (row.clientId) {
+      line.appendChild(linkCell(row.clientDisplayName || '-', `/clients/${row.clientId}`));
+    } else {
+      line.appendChild(textCell('не прив\'язано'));
+    }
+    line.appendChild(textCell(row.comment || '-'));
     line.appendChild(textCell(formatBytes(row.today)));
     line.appendChild(textCell(formatBytes(row.todayDownload)));
     line.appendChild(textCell(formatBytes(row.todayUpload)));

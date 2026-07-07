@@ -20,6 +20,7 @@ class DashboardCacheService
         $payload = $this->readCache();
 
         if ($payload !== null) {
+            $payload = $this->normalizePayload($payload);
             $payload['cacheStatus'] = 'hit';
             $payload['cacheAgeSeconds'] = $this->cacheAgeSeconds();
 
@@ -50,7 +51,7 @@ class DashboardCacheService
             'unlinkedDevices' => (int) $this->em->createQuery('SELECT COUNT(d.id) FROM App\Entity\Device d WHERE d.client IS NULL')->getSingleScalarResult(),
             'todayTraffic' => $this->todayTrafficFromRollups($today),
             'todayTrafficBreakdown' => $this->todayTrafficBreakdownFromRollups($today),
-            'topDevices' => $this->topDeviceRowsFromRollups($today),
+            'topDevices' => $this->normalizeTopDeviceRows($this->topDeviceRowsFromRollups($today)),
             'topClients' => $this->topClientRowsFromRollups($today),
             'topApps' => $this->topAppsFromRollups($today),
             'topDomains' => $this->topDestinationsFromRollups($today),
@@ -173,26 +174,82 @@ class DashboardCacheService
                 d.id,
                 d.mac,
                 d.current_ip currentIp,
+                d.comment comment,
                 COALESCE(SUM(u.total_bytes), 0) totalBytes,
                 COALESCE(SUM(u.bytes_in), 0) downloadBytes,
                 COALESCE(SUM(u.bytes_out), 0) uploadBytes
              FROM device_daily_usage u
              INNER JOIN device d ON d.id = u.device_id
              WHERE u.date = :today
-             GROUP BY d.id, d.mac, d.current_ip
+             GROUP BY d.id, d.mac, d.current_ip, d.comment
              ORDER BY totalBytes DESC
              LIMIT 10',
             ['today' => $today]
         );
 
-        return array_map(fn (array $row): array => [
-            'id' => (int) $row['id'],
-            'mac' => (string) $row['mac'],
-            'currentIp' => $row['currentIp'],
-            'today' => (int) $row['totalBytes'],
-            'todayDownload' => (int) $row['downloadBytes'],
-            'todayUpload' => (int) $row['uploadBytes'],
-        ], $rows);
+        return array_values(array_filter(array_map(function (array $row): ?array {
+            $device = $this->em->getRepository(Device::class)->find((int) $row['id']);
+            if (!$device) {
+                return null;
+            }
+
+            $client = $device->getClient();
+
+            return [
+                'id' => $device->getId(),
+                'mac' => $device->getMac(),
+                'currentIp' => $device->getCurrentIp(),
+                'clientId' => $client?->getId(),
+                'clientDisplayName' => $client?->getDisplayName(),
+                'comment' => $device->getComment(),
+                'today' => (int) $row['totalBytes'],
+                'todayDownload' => (int) $row['downloadBytes'],
+                'todayUpload' => (int) $row['uploadBytes'],
+            ];
+        }, $rows)));
+    }
+
+    private function normalizePayload(array $payload): array
+    {
+        if (isset($payload['topDevices']) && is_array($payload['topDevices'])) {
+            $payload['topDevices'] = $this->normalizeTopDeviceRows($payload['topDevices']);
+        }
+
+        return $payload;
+    }
+
+    private function normalizeTopDeviceRows(array $rows): array
+    {
+        return array_values(array_map(function (array $row): array {
+            if (
+                array_key_exists('clientId', $row)
+                && array_key_exists('clientDisplayName', $row)
+                && array_key_exists('comment', $row)
+            ) {
+                return $row;
+            }
+
+            $deviceId = (int) ($row['id'] ?? 0);
+            $device = $deviceId > 0 ? $this->em->getRepository(Device::class)->find($deviceId) : null;
+            if (!$device) {
+                return $row + [
+                    'clientId' => null,
+                    'clientDisplayName' => null,
+                    'comment' => null,
+                ];
+            }
+
+            $client = $device->getClient();
+
+            return $row + [
+                'id' => $device->getId(),
+                'mac' => $device->getMac(),
+                'currentIp' => $device->getCurrentIp(),
+                'clientId' => $client?->getId(),
+                'clientDisplayName' => $client?->getDisplayName(),
+                'comment' => $device->getComment(),
+            ];
+        }, $rows));
     }
 
     private function topClientRowsFromRollups(string $today): array
