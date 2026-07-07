@@ -126,8 +126,7 @@ class PageCacheService
                 d.comment,
                 d.last_seen_at lastSeenAt,
                 c.id clientId,
-                c.full_name clientFullName,
-                c.comment clientComment
+                c.full_name clientFullName
              FROM device d
              LEFT JOIN client c ON c.id = d.client_id
              ORDER BY d.last_seen_at DESC'
@@ -151,7 +150,6 @@ class PageCacheService
                     'lastSeenAt' => $device['lastSeenAt'],
                     'clientId' => $clientId,
                     'clientDisplayName' => $clientId !== null ? ($device['clientFullName'] ?: 'Client #'.$clientId) : null,
-                    'clientComment' => $device['clientComment'],
                 ],
                 'today' => $stats['total'],
                 'todayDownload' => $stats['download'],

@@ -26,7 +26,7 @@
                     <td>{{ row.today|format_bytes }}</td>
                     <td>{{ row.todayDownload|format_bytes }}</td>
                     <td>{{ row.todayUpload|format_bytes }}</td>
-                    <td>{{ device.clientComment|default('-') }}</td>
+                    <td>{{ device.comment ?: '-' }}</td>
                 </tr>
             {% else %}
                 <tr><td colspan="8">Немає даних</td></tr>

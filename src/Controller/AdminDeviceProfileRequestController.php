@@ -60,8 +60,9 @@ class AdminDeviceProfileRequestController extends AbstractController
         $client
             ->setFullName($changeRequest->getFullName())
             ->setRoomNumber($changeRequest->getRoomNumber())
-            ->setPhone($changeRequest->getPhone())
-            ->setComment($changeRequest->getComment());
+            ->setPhone($changeRequest->getPhone());
+
+        $device->setComment($changeRequest->getComment());
 
         $changeRequest
             ->setStatus('approved')
