@@ -5,11 +5,16 @@
 <div class="grid two">
     <section class="panel">
         <h2>Знайти пристрій</h2>
-        <form method="get" style="display:grid; gap:10px;">
+        <div style="display:grid; gap:10px;">
             <label>IP або MAC</label>
-            <input name="identifier" value="{{ identifier }}" placeholder="192.168.0.10 або A8:41:F4:60:22:A7">
-            <div class="muted">Натисніть Enter, щоб відкрити статистику пристрою.</div>
-        </form>
+            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                <div class="speedtest-pill" id="identifier-value">{{ identifier ?: 'Не вказано' }}</div>
+                {% if identifier %}
+                    <button type="button" class="btn secondary" id="identifier-copy">Скопіювати</button>
+                {% endif %}
+            </div>
+            <div class="muted">Значення береться з URL і не редагується на сторінці.</div>
+        </div>
 
         {% if message %}
             <div class="flash" style="margin-top:12px;">{{ message }}</div>
@@ -179,6 +184,9 @@ const speedtestElements = {
   detail: document.getElementById('speedtest-detail'),
 };
 
+const identifierValue = document.getElementById('identifier-value');
+const identifierCopy = document.getElementById('identifier-copy');
+
 function formatMs(value) {
   return `${Math.round(Number(value) || 0)} мс`;
 }
@@ -268,43 +276,58 @@ async function measureDownload(signal) {
   return (receivedBytes * 8) / elapsedSeconds;
 }
 
+function buildUploadPayload(size) {
+  const payload = new Uint8Array(size);
+  for (let offset = 0; offset < payload.length; offset += 65536) {
+    crypto.getRandomValues(payload.subarray(offset, Math.min(offset + 65536, payload.length)));
+  }
+  return payload;
+}
+
+async function uploadChunk(payload, signal) {
+  const response = await fetch(speedtestEndpoints.upload, {
+    method: 'POST',
+    cache: 'no-store',
+    signal,
+    headers: {
+      'Content-Type': 'application/octet-stream',
+    },
+    body: payload,
+  });
+
+  if (!response.ok) {
+    if (response.status === 413) {
+      throw new Error('Upload blocked by body-size limit');
+    }
+    throw new Error(`Upload failed: ${response.status}`);
+  }
+
+  return payload.byteLength;
+}
+
 async function measureUpload(signal) {
-  const sizes = [1024 * 1024, 256 * 1024, 64 * 1024];
+  const plans = [
+    { streams: 4, size: 1024 * 1024 },
+    { streams: 3, size: 512 * 1024 },
+    { streams: 2, size: 256 * 1024 },
+  ];
   let lastError = null;
 
-  for (const size of sizes) {
-    const payload = new Uint8Array(size);
-    for (let offset = 0; offset < payload.length; offset += 65536) {
-      crypto.getRandomValues(payload.subarray(offset, Math.min(offset + 65536, payload.length)));
-    }
-
+  for (const plan of plans) {
     try {
       const startedAt = performance.now();
-      const response = await fetch(speedtestEndpoints.upload, {
-        method: 'POST',
-        cache: 'no-store',
-        signal,
-        headers: {
-          'Content-Type': 'application/octet-stream',
-        },
-        body: payload,
-      });
-
-      if (!response.ok) {
-        if (response.status === 413) {
-          lastError = new Error('Upload blocked by body-size limit');
-          continue;
-        }
-        throw new Error(`Upload failed: ${response.status}`);
-      }
-
+      const uploads = Array.from({ length: plan.streams }, () => uploadChunk(buildUploadPayload(plan.size), signal));
+      const bytesSent = (await Promise.all(uploads)).reduce((sum, bytes) => sum + bytes, 0);
       const elapsedSeconds = (performance.now() - startedAt) / 1000;
-      return (payload.byteLength * 8) / elapsedSeconds;
+      return (bytesSent * 8) / elapsedSeconds;
     } catch (error) {
       if (error?.name === 'AbortError') {
         throw error;
       }
       lastError = error;
+      if (!String(error?.message || '').includes('body-size limit')) {
+        break;
+      }
     }
   }
 
@@ -385,6 +408,29 @@ speedtestElements.externalStart.addEventListener('click', () => {
     `width=${width},height=${height},left=${left},top=${top},scrollbars=yes,resizable=yes`
   );
 });
+
+if (identifierCopy && identifierValue) {
+  identifierCopy.addEventListener('click', async () => {
+    const text = identifierValue.textContent?.trim() || '';
+    if (!text || text === 'Не вказано') {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(text);
+      identifierCopy.textContent = 'Скопійовано';
+      window.setTimeout(() => {
+        identifierCopy.textContent = 'Скопіювати';
+      }, 1200);
+    } catch (error) {
+      console.warn('Copy identifier failed', error);
+      identifierCopy.textContent = 'Не вдалося';
+      window.setTimeout(() => {
+        identifierCopy.textContent = 'Скопіювати';
+      }, 1200);
+    }
+  });
+}
 
 resetResults();
 </script>
