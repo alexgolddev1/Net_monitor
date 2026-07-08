@@ -58,6 +58,12 @@
   "conflict": {
     "symfony/symfony": "*"
   },
+  "config": {
+    "allow-plugins": {
+      "symfony/flex": true,
+      "symfony/runtime": true
+    }
+  },
   "extra": {
     "symfony": {
       "allow-contrib": false,
