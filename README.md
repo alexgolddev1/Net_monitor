@@ -32,6 +32,7 @@ docker compose exec php php bin/console doctrine:fixtures:load --no-interaction
 Open:
 
 - UI: http://localhost:8080
+- phpMyAdmin: http://localhost:8081
 
 ## Environment
 
