@@ -10,13 +10,12 @@ use App\Service\IpIntel\Provider\AbuseIpDbProvider;
 use App\Service\IpIntel\Provider\IpApiProvider;
 use App\Service\IpIntel\Provider\MaxMindProvider;
 use App\Service\IpIntel\Provider\VirusTotalProvider;
-use Doctrine\DBAL\Exception\UniqueConstraintViolationException;
-use Doctrine\ORM\EntityManagerInterface;
+use Doctrine\DBAL\Connection;
 
 class IpIntelService
 {
     public function __construct(
-        private readonly EntityManagerInterface $em,
+        private readonly Connection $connection,
         private readonly IpIntelRepository $ipIntelRepository,
         private readonly MaxMindProvider $maxMindProvider,
         private readonly IpApiProvider $ipApiProvider,
@@ -60,8 +59,7 @@ class IpIntelService
         $result->confidence = $this->confidenceForResult($result, $flowContext);
         $result->checkedAt = new \DateTimeImmutable();
 
-        $entity = $existing instanceof IpIntel ? $existing : (new IpIntel())->setIp($ip);
-        $this->persistIntelEntity($entity, $result);
+        $this->persistIntelResult($result);
 
         return $result;
     }
@@ -88,28 +86,22 @@ class IpIntelService
             return new IpIntelResult('');
         }
 
-        $entity = $this->ipIntelRepository->findOneBy(['ip' => $ip]);
-        if (!$entity instanceof IpIntel) {
-            $entity = (new IpIntel())->setIp($ip);
+        $existing = $this->ipIntelRepository->findOneBy(['ip' => $ip]);
+        if ($existing instanceof IpIntel && !$override && $existing->getCategory() !== null && strtolower($existing->getCategory()) !== 'unknown') {
+            return $this->toResult($existing);
         }
 
-        if (!$override && $entity->getCategory() !== null && strtolower($entity->getCategory()) !== 'unknown') {
-            return $this->toResult($entity);
-        }
+        $result = $existing instanceof IpIntel ? $this->toResult($existing) : new IpIntelResult($ip);
+        $result->category = $category;
+        $result->confidence = $existing instanceof IpIntel && $existing->getConfidence() !== null
+            ? max($existing->getConfidence(), $confidence)
+            : $confidence;
+        $result->source = $this->appendSource($existing instanceof IpIntel ? $existing->getSource() : null, $source);
+        $result->checkedAt = new \DateTimeImmutable();
 
-        $currentConfidence = $entity->getConfidence();
-        $entity
-            ->setCategory($category)
-            ->setSource($this->appendSource($entity->getSource(), $source))
-            ->setCheckedAt(new \DateTimeImmutable());
+        $this->persistIntelResult($result);
 
-        if ($currentConfidence === null || $confidence > $currentConfidence) {
-            $entity->setConfidence($confidence);
-        }
-
-        $this->persistIntelEntity($entity, $this->toResult($entity));
-
-        return $this->toResult($entity);
+        return $result;
     }
 
     /**
@@ -178,45 +170,56 @@ class IpIntelService
         return max(0, min(100, $confidence));
     }
 
-    private function applyResultToEntity(IpIntel $entity, IpIntelResult $result): void
+    private function persistIntelResult(IpIntelResult $result): void
     {
-        $entity
-            ->setAsn($result->asn)
-            ->setOrganization($result->organization)
-            ->setIsp($result->isp)
-            ->setCountry($result->country)
-            ->setCity($result->city)
-            ->setReverseDns($result->reverseDns)
-            ->setIsHosting($result->isHosting)
-            ->setIsProxy($result->isProxy)
-            ->setIsMobile($result->isMobile)
-            ->setAbuseScore($result->abuseScore)
-            ->setCategory($result->category)
-            ->setConfidence($result->confidence)
-            ->setSource($result->source)
-            ->setCheckedAt($result->checkedAt);
-    }
+        $now = new \DateTimeImmutable();
 
-    private function persistIntelEntity(IpIntel $entity, IpIntelResult $result): void
-    {
-        $this->applyResultToEntity($entity, $result);
-
-        try {
-            $this->em->persist($entity);
-            $this->em->flush();
-            return;
-        } catch (UniqueConstraintViolationException) {
-            $this->em->clear();
-        }
-
-        $existing = $this->ipIntelRepository->findOneBy(['ip' => $result->ip]);
-        if (!$existing instanceof IpIntel) {
-            throw new \RuntimeException(sprintf('Failed to persist IP intel for %s after duplicate-key retry.', $result->ip));
-        }
-
-        $this->applyResultToEntity($existing, $result);
-        $this->em->persist($existing);
-        $this->em->flush();
+        $this->connection->executeStatement(
+            'INSERT INTO ip_intel (
+                ip, asn, organization, isp, country, city, reverse_dns,
+                is_hosting, is_proxy, is_mobile, abuse_score, category, confidence, source,
+                checked_at, created_at, updated_at
+             ) VALUES (
+                :ip, :asn, :organization, :isp, :country, :city, :reverseDns,
+                :isHosting, :isProxy, :isMobile, :abuseScore, :category, :confidence, :source,
+                :checkedAt, :createdAt, :updatedAt
+             )
+             ON DUPLICATE KEY UPDATE
+                asn = VALUES(asn),
+                organization = VALUES(organization),
+                isp = VALUES(isp),
+                country = VALUES(country),
+                city = VALUES(city),
+                reverse_dns = VALUES(reverse_dns),
+                is_hosting = VALUES(is_hosting),
+                is_proxy = VALUES(is_proxy),
+                is_mobile = VALUES(is_mobile),
+                abuse_score = VALUES(abuse_score),
+                category = VALUES(category),
+                confidence = VALUES(confidence),
+                source = VALUES(source),
+                checked_at = VALUES(checked_at),
+                updated_at = VALUES(updated_at)',
+            [
+                'ip' => $result->ip,
+                'asn' => $result->asn,
+                'organization' => $result->organization,
+                'isp' => $result->isp,
+                'country' => $result->country,
+                'city' => $result->city,
+                'reverseDns' => $result->reverseDns,
+                'isHosting' => $result->isHosting === null ? null : (int) $result->isHosting,
+                'isProxy' => $result->isProxy === null ? null : (int) $result->isProxy,
+                'isMobile' => $result->isMobile === null ? null : (int) $result->isMobile,
+                'abuseScore' => $result->abuseScore,
+                'category' => $result->category,
+                'confidence' => $result->confidence,
+                'source' => $result->source,
+                'checkedAt' => $result->checkedAt?->format('Y-m-d H:i:s'),
+                'createdAt' => $now->format('Y-m-d H:i:s'),
+                'updatedAt' => $now->format('Y-m-d H:i:s'),
+            ]
+        );
     }
 
     private function toResult(IpIntel $entity): IpIntelResult
