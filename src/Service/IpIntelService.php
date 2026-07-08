@@ -10,6 +10,7 @@ use App\Service\IpIntel\Provider\AbuseIpDbProvider;
 use App\Service\IpIntel\Provider\IpApiProvider;
 use App\Service\IpIntel\Provider\MaxMindProvider;
 use App\Service\IpIntel\Provider\VirusTotalProvider;
+use Doctrine\DBAL\Exception\UniqueConstraintViolationException;
 use Doctrine\ORM\EntityManagerInterface;
 
 class IpIntelService
@@ -60,9 +61,7 @@ class IpIntelService
         $result->checkedAt = new \DateTimeImmutable();
 
         $entity = $existing instanceof IpIntel ? $existing : (new IpIntel())->setIp($ip);
-        $this->applyResultToEntity($entity, $result);
-        $this->em->persist($entity);
-        $this->em->flush();
+        $this->persistIntelEntity($entity, $result);
 
         return $result;
     }
@@ -108,8 +107,7 @@ class IpIntelService
             $entity->setConfidence($confidence);
         }
 
-        $this->em->persist($entity);
-        $this->em->flush();
+        $this->persistIntelEntity($entity, $this->toResult($entity));
 
         return $this->toResult($entity);
     }
@@ -197,6 +195,28 @@ class IpIntelService
             ->setConfidence($result->confidence)
             ->setSource($result->source)
             ->setCheckedAt($result->checkedAt);
+    }
+
+    private function persistIntelEntity(IpIntel $entity, IpIntelResult $result): void
+    {
+        $this->applyResultToEntity($entity, $result);
+
+        try {
+            $this->em->persist($entity);
+            $this->em->flush();
+            return;
+        } catch (UniqueConstraintViolationException) {
+            $this->em->clear();
+        }
+
+        $existing = $this->ipIntelRepository->findOneBy(['ip' => $result->ip]);
+        if (!$existing instanceof IpIntel) {
+            throw new \RuntimeException(sprintf('Failed to persist IP intel for %s after duplicate-key retry.', $result->ip));
+        }
+
+        $this->applyResultToEntity($existing, $result);
+        $this->em->persist($existing);
+        $this->em->flush();
     }
 
     private function toResult(IpIntel $entity): IpIntelResult
