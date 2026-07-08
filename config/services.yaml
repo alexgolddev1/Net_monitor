@@ -4,6 +4,11 @@ parameters:
   app.local_subnets: '%env(LOCAL_SUBNETS)%'
   app.own_wan_ips: '%env(OWN_WAN_IPS)%'
   app.mikrotik_monitor_interface: 'ether1'
+  app.maxmind_db_path: '%env(string:MAXMIND_DB_PATH)%'
+  app.ip_api_enabled: '%env(bool:IP_API_ENABLED)%'
+  app.abuseipdb_api_key: '%env(string:ABUSEIPDB_API_KEY)%'
+  app.virustotal_api_key: '%env(string:VIRUSTOTAL_API_KEY)%'
+  app.ip_intel_cache_days: '%env(int:IP_INTEL_CACHE_DAYS)%'
 
 services:
   _defaults:
@@ -15,6 +20,11 @@ services:
       string $localSubnets: '%app.local_subnets%'
       string $ownWanIps: '%app.own_wan_ips%'
       string $mikrotikMonitorInterface: '%app.mikrotik_monitor_interface%'
+      string $maxmindDbPath: '%app.maxmind_db_path%'
+      bool $ipApiEnabled: '%app.ip_api_enabled%'
+      string $abuseIpDbApiKey: '%app.abuseipdb_api_key%'
+      string $virusTotalApiKey: '%app.virustotal_api_key%'
+      int $ipIntelCacheDays: '%app.ip_intel_cache_days%'
 
   App\:
     resource: '../src/'
