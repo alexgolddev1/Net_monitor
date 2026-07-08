@@ -16,9 +16,9 @@ class CreateTrafficIndexesCommand extends Command
      * @var array<string, string>
      */
     private const INDEXES = [
-        'idx_network_flow_torrent_detector' => 'CREATE INDEX idx_network_flow_torrent_detector ON network_flow (protocol, received_at, src_ip, src_port) ALGORITHM=INPLACE, LOCK=NONE',
-        'idx_network_flow_vpn_detector' => 'CREATE INDEX idx_network_flow_vpn_detector ON network_flow (client_id, received_at, dst_ip) ALGORITHM=INPLACE, LOCK=NONE',
-        'idx_network_flow_common_service' => 'CREATE INDEX idx_network_flow_common_service ON network_flow (dst_ip, received_at, client_id) ALGORITHM=INPLACE, LOCK=NONE',
+        'idx_network_flow_torrent_detector' => 'ALTER TABLE network_flow ADD INDEX idx_network_flow_torrent_detector (protocol, received_at, src_ip, src_port), ALGORITHM=INPLACE, LOCK=NONE',
+        'idx_network_flow_vpn_detector' => 'ALTER TABLE network_flow ADD INDEX idx_network_flow_vpn_detector (client_id, received_at, dst_ip), ALGORITHM=INPLACE, LOCK=NONE',
+        'idx_network_flow_common_service' => 'ALTER TABLE network_flow ADD INDEX idx_network_flow_common_service (dst_ip, received_at, client_id), ALGORITHM=INPLACE, LOCK=NONE',
     ];
 
     public function __construct(private readonly Connection $connection)
