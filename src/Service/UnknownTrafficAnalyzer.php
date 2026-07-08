@@ -14,24 +14,53 @@ class UnknownTrafficAnalyzer
     ) {
     }
 
-    public function analyze(): TrafficAnalysisSummary
+    /**
+     * @param null|callable(string):void $progress
+     */
+    public function analyze(?callable $progress = null): TrafficAnalysisSummary
     {
         $summary = new TrafficAnalysisSummary();
+        $emit = static function (?callable $progress, string $message): void {
+            if ($progress !== null) {
+                $progress($message);
+            }
+        };
+
+        $emit($progress, 'Starting unknown traffic analysis.');
         $pendingIps = $this->discoverExternalIps();
+        $totalPendingIps = count($pendingIps);
+        $emit($progress, sprintf('Found %d external IPs to refresh.', $totalPendingIps));
 
         $intelResults = [];
-        foreach ($pendingIps as $ip) {
+        foreach ($pendingIps as $position => $ip) {
+            $emit($progress, sprintf(
+                '[%d/%d] Analyzing IP %s',
+                $position + 1,
+                $totalPendingIps,
+                $ip
+            ));
             $intelResults[$ip] = $this->ipIntelService->analyze($ip);
         }
         $summary->refreshedIps = count($intelResults);
+        $emit($progress, sprintf('IP intel refreshed for %d IPs.', $summary->refreshedIps));
 
         foreach ($intelResults as $result) {
             $this->incrementSummaryByCategory($summary, $result->category);
         }
 
+        $emit($progress, 'Running torrent detector.');
         $summary->torrent = $this->detectTorrent();
+        $emit($progress, sprintf('Torrent detector matched %d IPs.', $summary->torrent));
+
+        $emit($progress, 'Running VPN detector.');
         $summary->vpn = $this->detectVpn();
-        $this->detectCommonUnknownService();
+        $emit($progress, sprintf('VPN detector matched %d IPs.', $summary->vpn));
+
+        $emit($progress, 'Running common service detector.');
+        $commonServiceCount = $this->detectCommonUnknownService();
+        $emit($progress, sprintf('Common service detector matched %d IPs.', $commonServiceCount));
+
+        $emit($progress, 'Unknown traffic analysis finished.');
 
         return $summary;
     }

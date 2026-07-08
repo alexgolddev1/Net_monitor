@@ -18,7 +18,11 @@ class AnalyzeTrafficCommand extends Command
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
-        $summary = $this->unknownTrafficAnalyzer->analyze();
+        $summary = $this->unknownTrafficAnalyzer->analyze(
+            static function (string $message) use ($output): void {
+                $output->writeln($message);
+            }
+        );
 
         $output->writeln(sprintf('External IPs refreshed: %d', $summary->refreshedIps));
         $output->writeln(sprintf('Torrent: %d', $summary->torrent));
