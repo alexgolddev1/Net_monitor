@@ -43,7 +43,7 @@ class IpIntelService
 
         $result = new IpIntelResult($ip);
 
-        foreach ($this->providers() as $provider) {
+        foreach ($this->cheapProviders() as $provider) {
             $partial = $provider->analyze($ip);
             $result->merge($partial);
         }
@@ -56,6 +56,16 @@ class IpIntelService
 
         $flowContext = $this->flowContextResolver->resolveForIp($ip);
         $result->category = $this->categoryClassifier->classify($result, $flowContext);
+
+        if ($this->shouldQueryExpensiveProviders($result, $flowContext)) {
+            foreach ($this->expensiveProviders() as $provider) {
+                $partial = $provider->analyze($ip);
+                $result->merge($partial);
+            }
+
+            $result->category = $this->categoryClassifier->classify($result, $flowContext);
+        }
+
         $result->confidence = $this->confidenceForResult($result, $flowContext);
         $result->checkedAt = new \DateTimeImmutable();
 
@@ -107,14 +117,68 @@ class IpIntelService
     /**
      * @return list<IpIntelProviderInterface>
      */
-    private function providers(): array
+    private function cheapProviders(): array
     {
         return [
             $this->maxMindProvider,
             $this->ipApiProvider,
+        ];
+    }
+
+    /**
+     * @return list<IpIntelProviderInterface>
+     */
+    private function expensiveProviders(): array
+    {
+        return [
             $this->abuseIpDbProvider,
             $this->virusTotalProvider,
         ];
+    }
+
+    private function shouldQueryExpensiveProviders(IpIntelResult $result, ?array $flowContext): bool
+    {
+        if ($result->category !== null && strtolower($result->category) !== 'unknown') {
+            return false;
+        }
+
+        if ($result->isHosting === true || $result->isProxy === true || $result->isMobile === true) {
+            return false;
+        }
+
+        $signals = implode(' ', array_filter([
+            $result->organization,
+            $result->isp,
+            $result->country,
+            $result->city,
+            $result->reverseDns,
+            $flowContext['domain'] ?? null,
+            $flowContext['organization'] ?? null,
+            $flowContext['app_name'] ?? null,
+        ]));
+
+        if ($signals !== '' && $this->containsAny($signals, [
+            'cloudflare',
+            'akamai',
+            'fastly',
+            'cdn',
+            'google',
+            'microsoft',
+            'apple',
+            'amazon',
+            'm247',
+            'ovh',
+            'hetzner',
+            'leaseweb',
+            'digitalocean',
+            'linode',
+            'vultr',
+            'datacamp',
+        ])) {
+            return false;
+        }
+
+        return true;
     }
 
     private function resolveReverseDns(string $ip): ?string
@@ -260,5 +324,18 @@ class IpIntelService
         }
 
         return implode(',', array_values($sources));
+    }
+
+    private function containsAny(string $haystack, array $needles): bool
+    {
+        $haystack = strtolower($haystack);
+
+        foreach ($needles as $needle) {
+            if (str_contains($haystack, strtolower((string) $needle))) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

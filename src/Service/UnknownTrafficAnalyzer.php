@@ -19,6 +19,14 @@ class UnknownTrafficAnalyzer
      */
     public function analyze(?callable $progress = null): TrafficAnalysisSummary
     {
+        return $this->analyzeSince(null, $progress);
+    }
+
+    /**
+     * @param null|callable(string):void $progress
+     */
+    public function analyzeSince(?\DateTimeImmutable $since, ?callable $progress = null): TrafficAnalysisSummary
+    {
         $summary = new TrafficAnalysisSummary();
         $emit = static function (?callable $progress, string $message): void {
             if ($progress !== null) {
@@ -26,8 +34,15 @@ class UnknownTrafficAnalyzer
             }
         };
 
+        if ($since !== null) {
+            $emit($progress, sprintf(
+                'Analyzing unknown traffic since %s.',
+                $since->format('Y-m-d H:i:s')
+            ));
+        }
+
         $emit($progress, 'Starting unknown traffic analysis.');
-        $pendingIps = $this->discoverExternalIps();
+        $pendingIps = $since === null ? $this->discoverExternalIps() : $this->discoverExternalIpsSince($since);
         $totalPendingIps = count($pendingIps);
         $emit($progress, sprintf('Found %d external IPs to refresh.', $totalPendingIps));
 
@@ -70,16 +85,32 @@ class UnknownTrafficAnalyzer
      */
     public function discoverExternalIps(): array
     {
+        return $this->discoverExternalIpsSince(null);
+    }
+
+    /**
+     * @return list<string>
+     */
+    public function discoverExternalIpsSince(?\DateTimeImmutable $since): array
+    {
+        $params = [];
+        $sinceClause = '';
+        if ($since !== null) {
+            $sinceClause = ' AND received_at >= :since';
+            $params['since'] = $since->format('Y-m-d H:i:s');
+        }
+
         $rows = $this->connection->fetchAllAssociative(
             'SELECT DISTINCT ip FROM (
-                 SELECT src_ip AS ip FROM network_flow WHERE src_ip IS NOT NULL AND src_ip <> \'\'
+                 SELECT src_ip AS ip FROM network_flow WHERE src_ip IS NOT NULL AND src_ip <> \'\''.$sinceClause.'
                  UNION
-                 SELECT dst_ip AS ip FROM network_flow WHERE dst_ip IS NOT NULL AND dst_ip <> \'\'
+                 SELECT dst_ip AS ip FROM network_flow WHERE dst_ip IS NOT NULL AND dst_ip <> \'\''.$sinceClause.'
                  UNION
-                 SELECT post_nat_src_ip AS ip FROM network_flow WHERE post_nat_src_ip IS NOT NULL AND post_nat_src_ip <> \'\'
+                 SELECT post_nat_src_ip AS ip FROM network_flow WHERE post_nat_src_ip IS NOT NULL AND post_nat_src_ip <> \'\''.$sinceClause.'
                  UNION
-                 SELECT post_nat_dst_ip AS ip FROM network_flow WHERE post_nat_dst_ip IS NOT NULL AND post_nat_dst_ip <> \'\'
-             ) candidates'
+                 SELECT post_nat_dst_ip AS ip FROM network_flow WHERE post_nat_dst_ip IS NOT NULL AND post_nat_dst_ip <> \'\''.$sinceClause.'
+             ) candidates',
+            $params
         );
 
         if ($rows === []) {
@@ -136,7 +167,7 @@ class UnknownTrafficAnalyzer
              GROUP BY src_ip, src_port
              HAVING COUNT(DISTINCT dst_ip) >= 50 AND COUNT(DISTINCT dst_port) >= 30',
             [
-                'cutoff' => (new \DateTimeImmutable('-15 minutes'))->format('Y-m-d H:i:s'),
+            'cutoff' => (new \DateTimeImmutable('-15 minutes'))->format('Y-m-d H:i:s'),
             ]
         );
 
@@ -219,13 +250,19 @@ class UnknownTrafficAnalyzer
 
     public function detectCommonUnknownService(): int
     {
+        return $this->detectCommonUnknownServiceSince(new \DateTimeImmutable('-30 minutes'));
+    }
+
+    public function detectCommonUnknownServiceSince(\DateTimeImmutable $since): int
+    {
+        $cutoff = $since->format('Y-m-d H:i:s');
         $rows = $this->connection->fetchAllAssociative(
             'SELECT dst_ip, COUNT(DISTINCT client_id) AS clients
              FROM network_flow
              WHERE received_at >= :cutoff
                AND dst_ip IS NOT NULL
                AND dst_ip <> \'\'
-               AND client_id IS NOT NULL
+              AND client_id IS NOT NULL
              GROUP BY dst_ip
              HAVING COUNT(DISTINCT client_id) >= 3',
             ['cutoff' => (new \DateTimeImmutable('-30 minutes'))->format('Y-m-d H:i:s')]
@@ -246,7 +283,6 @@ class UnknownTrafficAnalyzer
             $this->ipIntelService->storeDerivedClassification($ip, 'common_service', 75, 'traffic:common_service', false);
             ++$count;
         }
-
         return $count;
     }
 
