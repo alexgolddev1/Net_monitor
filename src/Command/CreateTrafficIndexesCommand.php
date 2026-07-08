@@ -36,6 +36,26 @@ class CreateTrafficIndexesCommand extends Command
                 continue;
             }
 
+            $busyQueries = $this->busyNetworkFlowQueries();
+            if ($busyQueries !== []) {
+                $output->writeln(sprintf(
+                    'network_flow is busy, skipping %s to avoid metadata lock.',
+                    $indexName
+                ));
+                foreach ($busyQueries as $query) {
+                    $output->writeln(sprintf(
+                        '  id=%d state=%s time=%d info=%s',
+                        $query['id'],
+                        $query['state'] ?? '-',
+                        $query['time'] ?? 0,
+                        $query['info'] ?? '-'
+                    ));
+                }
+                $output->writeln('Stop writers like netflow-worker and rerun this command.');
+
+                return Command::FAILURE;
+            }
+
             $output->writeln(sprintf('Creating %s...', $indexName));
             $output->writeln(sprintf('SQL: %s', $sql));
 
@@ -61,5 +81,39 @@ class CreateTrafficIndexesCommand extends Command
         );
 
         return $rows !== [];
+    }
+
+    /**
+     * @return list<array{id: int, state: ?string, time: int, info: ?string}>
+     */
+    private function busyNetworkFlowQueries(): array
+    {
+        $rows = $this->connection->fetchAllAssociative(
+            'SELECT ID, STATE, TIME, INFO
+             FROM information_schema.PROCESSLIST
+             WHERE DB = DATABASE()
+               AND ID <> CONNECTION_ID()
+               AND COMMAND = \'Query\'
+               AND (
+                    INFO LIKE \'%network_flow%\'
+                    OR STATE LIKE \'%metadata lock%\'
+                    OR STATE LIKE \'%Sending data%\'
+                    OR STATE LIKE \'%Creating index%\'
+                    OR STATE LIKE \'%altering table%\'
+               )
+             ORDER BY TIME DESC'
+        );
+
+        $busy = [];
+        foreach ($rows as $row) {
+            $busy[] = [
+                'id' => (int) ($row['ID'] ?? 0),
+                'state' => isset($row['STATE']) ? (string) $row['STATE'] : null,
+                'time' => (int) ($row['TIME'] ?? 0),
+                'info' => isset($row['INFO']) ? (string) $row['INFO'] : null,
+            ];
+        }
+
+        return $busy;
     }
 }
