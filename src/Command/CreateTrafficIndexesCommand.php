@@ -3,9 +3,9 @@
 namespace App\Command;
 
 use Doctrine\DBAL\Connection;
+use Doctrine\DBAL\Exception as DBALException;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
-use Symfony\Component\Console\Helper\ProgressBar;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 
@@ -30,24 +30,24 @@ class CreateTrafficIndexesCommand extends Command
     {
         $output->writeln('Creating traffic indexes.');
 
-        $progressBar = new ProgressBar($output, count(self::INDEXES));
-        $progressBar->start();
-
         foreach (self::INDEXES as $indexName => $sql) {
             if ($this->indexExists($indexName)) {
                 $output->writeln(sprintf('Index %s already exists, skipping.', $indexName));
-                $progressBar->advance();
                 continue;
             }
 
             $output->writeln(sprintf('Creating %s...', $indexName));
-            $this->connection->executeStatement($sql);
-            $output->writeln(sprintf('Created %s.', $indexName));
-            $progressBar->advance();
+            $output->writeln(sprintf('SQL: %s', $sql));
+
+            try {
+                $this->connection->executeStatement($sql);
+                $output->writeln(sprintf('Created %s.', $indexName));
+            } catch (DBALException $e) {
+                $output->writeln(sprintf('Failed %s: %s', $indexName, $e->getMessage()));
+                return Command::FAILURE;
+            }
         }
 
-        $progressBar->finish();
-        $output->writeln('');
         $output->writeln('Traffic index creation finished.');
 
         return Command::SUCCESS;
